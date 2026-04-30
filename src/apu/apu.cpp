@@ -9,6 +9,12 @@ Apu::Apu() : frame_step_(0), frame_mode_(0), irq_disable_(false),
     pulse1_ = {}; pulse2_ = {}; triangle_ = {}; noise_ = {}; dmc_ = {};
 }
 
+bool Apu::init(int sample_rate) {
+    sample_rate_ = sample_rate;
+    reset();
+    return true;
+}
+
 void Apu::reset() {
     pulse1_ = {}; pulse2_ = {}; triangle_ = {}; noise_ = {}; dmc_ = {};
     frame_step_ = 0; frame_mode_ = 0; irq_disable_ = false; frame_irq_flag_ = false;
@@ -79,11 +85,11 @@ void Apu::generate_samples(int num_samples) {
 
 int16_t Apu::get_channel_output(ApuChannel ch) const {
     switch (ch) {
-        case Pulse1: return pulse1_.output;
-        case Pulse2: return pulse2_.output;
-        case Triangle: return triangle_.output;
-        case Noise: return noise_.output;
-        case Dmc: return dmc_.output;
+        case ApuChannel::Pulse1: return pulse1_.output;
+        case ApuChannel::Pulse2: return pulse2_.output;
+        case ApuChannel::Triangle: return triangle_.output;
+        case ApuChannel::Noise: return noise_.output;
+        case ApuChannel::Dmc: return dmc_.output;
     }
     return 0;
 }

@@ -81,8 +81,6 @@ void Cartridge::load_battery_ram(const std::string& path) {
     file.read(reinterpret_cast<char*>(battery_ram_.data()), battery_ram_.size());
 }
 
-bool Cartridge::irq_pending() const { return irq_pending_; }
-void Cartridge::clear_irq() { irq_pending_ = false; }
 void Cartridge::notify_scanline(int scanline) {
     if (mapper_) mapper_->scanline_irq(scanline);
 }

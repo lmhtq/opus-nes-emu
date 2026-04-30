@@ -8,8 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 
-# 源文件
-set(SOURCES
+# 库源文件（不含 main.cpp）
+set(LIB_SOURCES
     src/cpu/cpu.cpp
     src/ppu/ppu.cpp
     src/apu/apu.cpp
@@ -23,18 +23,20 @@ set(SOURCES
     src/replay/replay.cpp
     src/resource/resource_analyzer.cpp
     src/presets/presets.cpp
-    src/main.cpp
 )
 
 # 头文件目录
-include_directories(include)
+include_directories(src/include)
 include_directories(${SDL2_INCLUDE_DIRS})
 
-# 可执行文件
-add_executable(fcemu ${SOURCES})
+# 静态库
+add_library(fcemu_lib STATIC ${LIB_SOURCES})
+target_include_directories(fcemu_lib PUBLIC src/include)
 
-# 链接库
+# 可执行文件
+add_executable(fcemu src/main.cpp)
 target_link_libraries(fcemu
+    fcemu_lib
     ${SDL2_LIBRARIES}
     OpenGL::GL
 )

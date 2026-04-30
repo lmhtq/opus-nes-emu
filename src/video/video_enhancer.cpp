@@ -5,8 +5,7 @@
 namespace fcemu {
 
 VideoEnhancer::VideoEnhancer()
-    : input_texture_(0), output_texture_(0), framebuffer_(0),
-      crt_shader_(0), aa_shader_(0), hdr_shader_(0), bloom_shader_(0),
+    : input_texture_(0), output_texture_(0),
       crt_{}, hdr_{}, aa_mode_(AAMode::None), widescreen_(false),
       passthrough_(false), texture_replacement_enabled_(false),
       shake_intensity_(0.0f), shake_remaining_ms_(0), hit_flash_(false) {}
@@ -63,10 +62,6 @@ uint32_t VideoEnhancer::load_texture(const std::string& path) {
     printf("VideoEnhancer: Loading texture %s\n", path.c_str());
     // TODO: Load PNG, create OpenGL texture
     return 0;
-}
-
-void VideoEnhancer::compile_shaders() {
-    // TODO: Compile CRT, AA, HDR, Bloom shaders
 }
 
 } // namespace fcemu

@@ -14,9 +14,11 @@ void test_reset() {
     printf("Test: CPU reset...\n");
     fcemu::Cpu6502 cpu;
     cpu.set_callbacks(mock_read, mock_write);
+    mock_memory[0xFFFC] = 0x00;  // RESET vector low
+    mock_memory[0xFFFD] = 0x80;  // RESET vector high
     cpu.reset();
     auto regs = cpu.registers();
-    assert(regs.pc != 0);  // Should be from RESET vector
+    assert(regs.pc == 0x8000);  // Should be from RESET vector
     assert(regs.sp == 0xFD);
     printf("  PASS\n");
 }

@@ -10,9 +10,9 @@ Ppu::Ppu()
       fine_x_(0), addr_latch_(false), scanline_(0), dot_(0),
       even_frame_(true) {
     std::memset(&frame_buffer_, 0, sizeof(frame_buffer_));
-    std::memset(oam_, 0, sizeof(oam_));
-    std::memset(secondary_oam_, 0, sizeof(secondary_oam_));
-    std::memset(palette_, 0, sizeof(palette_));
+    oam_.fill(0);
+    secondary_oam_.fill(0);
+    palette_.fill(0);
 }
 
 void Ppu::reset() {
@@ -112,8 +112,6 @@ void Ppu::render_scanline(int y) {
         frame_buffer_.pixels[idx + 3] = 0xFF;  // A
     }
 }
-
-const Ppu::FrameBuffer& Ppu::frame_buffer() const { return frame_buffer_; }
 
 uint8_t Ppu::read_status() {
     uint8_t status = regs_.status;

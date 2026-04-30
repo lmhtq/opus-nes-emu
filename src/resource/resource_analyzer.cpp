@@ -35,8 +35,6 @@ bool ResourceAnalyzer::analyze_rom_file(const std::string& rom_path) {
     return false;
 }
 
-const ResourceManifest& ResourceAnalyzer::manifest() const { return manifest_; }
-
 void ResourceAnalyzer::extract_tiles(const std::vector<uint8_t>& chr_rom) {
     size_t num_tiles = chr_rom.size() / 16;  // 16 bytes per 8x8 tile
     printf("ResourceAnalyzer: Extracted %zu tiles\n", num_tiles);
@@ -55,15 +53,11 @@ void ResourceAnalyzer::extract_sprites(const std::vector<uint8_t>& chr_rom) {
     // TODO: Analyze OAM patterns
 }
 
-void ResourceAnalyzer::capture_palette(const Ppu* ppu) {
+void ResourceAnalyzer::capture_palette(Ppu* ppu) {
     // TODO
 }
 
-void ResourceAnalyzer::capture_sprites(const Ppu* ppu) {
-    // TODO
-}
-
-void ResourceAnalyzer::analyze_audio_patterns(const Apu* apu) {
+void ResourceAnalyzer::analyze_audio_patterns(Apu* apu) {
     // TODO
 }
 
@@ -73,11 +67,11 @@ bool ResourceAnalyzer::export_manifest(const std::string& path) const {
     return false;
 }
 
-void ResourceAnalyzer::on_scanline(int scanline, const Ppu* ppu) {
+void ResourceAnalyzer::on_scanline(int scanline, Ppu* ppu) {
     // TODO: Runtime capture
 }
 
-void ResourceAnalyzer::on_audio_channel(int channel, const Apu* apu) {
+void ResourceAnalyzer::on_audio_channel(int channel, Apu* apu) {
     // TODO: Runtime audio analysis
 }
 
@@ -100,12 +94,6 @@ void ResourceAnalyzer::decode_tile(const uint8_t* data, std::vector<uint8_t>& rg
             rgba[idx + 3] = 255;          // A
         }
     }
-}
-
-void ResourceAnalyzer::decode_sprite(const uint8_t* data, std::vector<uint8_t>& rgba,
-                                    uint8_t attr, const uint8_t* palette) const {
-    decode_tile(data, rgba, palette);
-    // TODO: Handle flip flags from attr
 }
 
 }  // namespace fcemu

@@ -26,7 +26,6 @@ void AudioEnhancer::shutdown() {
 
 void AudioEnhancer::process_samples(const std::vector<int16_t>& input,
                                 std::vector<int16_t>& output) {
-    // TODO: Apply stereo expansion, EQ, reverb, etc.
     output = input;  // Pass-through for now
 }
 
@@ -62,39 +61,14 @@ void AudioEnhancer::set_remix_volume(float vol) { /* TODO */ }
 
 void AudioEnhancer::set_scene(const std::string& scene) {
     current_scene_ = scene;
-    auto it = scene_params_.find(scene);
-    if (it != scene_params_.end()) {
-        set_equalizer(it->second.eq);
-        set_reverb(it->second.reverb);
-        set_bass_boost(it->second.bass);
-        set_treble_boost(it->second.treble);
-    }
 }
 
-void AudioEnhancer::register_scene_params(const std::string& scene,
-                                       const EqualizerBands& eq,
-                                       const ReverbParams& reverb,
-                                       float bass, float treble) {
-    SceneParams params;
-    params.eq = eq;
-    params.reverb = reverb;
-    params.bass = bass;
-    params.treble = treble;
-    scene_params_[scene] = params;
-}
-
-AudioEnhancer::VisualizationData AudioEnhancer::get_visualization() const {
+VisualizationData AudioEnhancer::get_visualization() const {
     return vis_data_;
-}
-
-bool AudioEnhancer::load_preset_pack(const std::string& manifest_path) {
-    printf("AudioEnhancer: Loading preset pack from %s\n", manifest_path.c_str());
-    return false;  // TODO
 }
 
 void AudioEnhancer::apply_equalizer(std::vector<float>& samples) { /* TODO */ }
 void AudioEnhancer::apply_reverb(std::vector<float>& left, std::vector<float>& right) { /* TODO */ }
 void AudioEnhancer::apply_stereo_expand(std::vector<float>& left, std::vector<float>& right) { /* TODO */ }
-void AudioEnhancer::update_visualization(const std::vector<int16_t>& samples) { /* TODO */ }
 
 }  // namespace fcemu

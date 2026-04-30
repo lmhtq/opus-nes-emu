@@ -24,8 +24,6 @@ void PresetManager::scan_presets() {
     // TODO: Scan directory for manifest.json files
 }
 
-const std::vector<PresetInfo>& PresetManager::presets() const { return presets_; }
-
 PresetInfo* PresetManager::find_matching_preset(const std::string& rom_sha256, PresetType type) {
     for (auto& p : presets_) {
         if (p.manifest.rom_sha256 == rom_sha256 && p.manifest.type == type && p.compatible) {
@@ -72,12 +70,6 @@ bool PresetManager::is_enabled(const std::string& preset_id) const {
 
 bool PresetManager::import_preset(const std::string& path) {
     printf("PresetManager: Import preset from %s\n", path.c_str());
-    // TODO
-    return false;
-}
-
-bool PresetManager::import_preset_url(const std::string& url) {
-    printf("PresetManager: Import preset from URL %s\n", url.c_str());
     // TODO
     return false;
 }
