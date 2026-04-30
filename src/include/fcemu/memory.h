@@ -38,6 +38,9 @@ public:
     uint8_t* internal_ram()             { return ram_.data(); }
     const uint8_t* internal_ram() const { return ram_.data(); }
 
+    void serialize(class Serializer& s) const;
+    void deserialize(class Deserializer& d);
+
 private:
     std::array<uint8_t, 0x0800> ram_{};
     MemReadCallback  ppu_r_, apu_r_, input_r_, cart_r_;

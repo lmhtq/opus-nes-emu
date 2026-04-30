@@ -51,9 +51,11 @@ public:
     // Per-frame ops driven by main loop.
     void          process_events();
     bool          should_quit() const { return quit_; }
-    void          render_frame(const uint8_t* rgba_256x240);
+    void          render_frame(const uint8_t* rgba, int w = 256, int h = 240);
     void          push_audio(const int16_t* samples, int n_samples_stereo);
     InputSnapshot input_snapshot() const { return snap_; }
+
+    bool debug_overlay() const { return debug_overlay_; }
 
     // Misc.
     void set_title(const std::string& t);
@@ -78,6 +80,8 @@ private:
     void* window_   = nullptr;     // SDL_Window*
     void* renderer_ = nullptr;     // SDL_Renderer*
     void* texture_  = nullptr;     // SDL_Texture*
+    int   tex_w_ = 256, tex_h_ = 240;
+    bool  debug_overlay_ = false;
     uint32_t audio_device_ = 0;
     void* gamepads_[4] = {nullptr,nullptr,nullptr,nullptr}; // SDL_GameController*
 

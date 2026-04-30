@@ -26,6 +26,9 @@ public:
     virtual void scanline_tick() {}     // Called by PPU on each visible scanline
     virtual int  number() const = 0;
 
+    virtual void save_state(class Serializer&) const {}
+    virtual void load_state(class Deserializer&) {}
+
 protected:
     Cartridge& cart_;
 };
@@ -58,6 +61,9 @@ public:
 
     bool save_battery_ram(const std::string& path) const;
     bool load_battery_ram(const std::string& path);
+
+    void serialize(class Serializer& s) const;
+    void deserialize(class Deserializer& d);
 
     // Accessors used by mappers.
     std::vector<uint8_t>& prg_rom()      { return prg_rom_; }

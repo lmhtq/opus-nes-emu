@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace fcemu {
@@ -44,12 +45,22 @@ public:
     void set_enabled(bool enable) { enabled_ = enable; }
     bool enabled() const { return enabled_; }
 
+    // Compute and emit a "dominant" color for the current frame. Implementation
+    // averages a downsampled grid then applies the result via apply_rgb()
+    // (which is a stub for hardware integration) and the optional callback.
+    using RgbCallback = std::function<void(RGBColor)>;
+    void set_rgb_callback(RgbCallback cb) { rgb_cb_ = std::move(cb); }
+    RGBColor compute_dominant_color(const uint8_t* rgba_256x240) const;
+    void update_from_frame(const uint8_t* rgba_256x240);
+    RGBColor current_color() const { return current_color_; }
+
 private:
     void* haptic_device_;
     void* rgb_device_;
     bool enabled_ = true;
     RGBColor current_color_;
     LightMode current_light_mode_;
+    RgbCallback rgb_cb_;
     void apply_vibration(VibrationIntensity intensity, int duration_ms);
     void apply_rgb(RGBColor color, LightMode mode, int duration_ms);
     void apply_trigger_resistance(float left, float right);

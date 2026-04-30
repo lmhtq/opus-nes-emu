@@ -24,6 +24,8 @@ set(LIB_SOURCES
     src/replay/replay.cpp
     src/resource/resource_analyzer.cpp
     src/presets/presets.cpp
+    src/savestate/savestate.cpp
+    src/social/social_bridge.cpp
 )
 
 # 头文件目录

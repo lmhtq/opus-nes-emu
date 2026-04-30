@@ -27,6 +27,8 @@ public:
     void    cpu_write(uint16_t addr, uint8_t val) override;
     uint8_t ppu_read(uint16_t addr) override;
     void    ppu_write(uint16_t addr, uint8_t val) override;
+    void    save_state(class Serializer& s) const override;
+    void    load_state(class Deserializer& d) override;
 
 private:
     uint8_t shift_   = 0x10;   // bit 4 set = empty marker
@@ -50,6 +52,8 @@ public:
     void    cpu_write(uint16_t addr, uint8_t val) override;
     uint8_t ppu_read(uint16_t addr) override;
     void    ppu_write(uint16_t addr, uint8_t val) override;
+    void    save_state(class Serializer& s) const override;
+    void    load_state(class Deserializer& d) override;
 private:
     uint8_t prg_bank_ = 0;
 };
@@ -64,6 +68,8 @@ public:
     void    cpu_write(uint16_t addr, uint8_t val) override;
     uint8_t ppu_read(uint16_t addr) override;
     void    ppu_write(uint16_t addr, uint8_t val) override;
+    void    save_state(class Serializer& s) const override;
+    void    load_state(class Deserializer& d) override;
 private:
     uint8_t chr_bank_ = 0;
 };
@@ -79,6 +85,8 @@ public:
     uint8_t ppu_read(uint16_t addr) override;
     void    ppu_write(uint16_t addr, uint8_t val) override;
     void    scanline_tick() override;
+    void    save_state(class Serializer& s) const override;
+    void    load_state(class Deserializer& d) override;
 private:
     uint8_t bank_select_ = 0;
     uint8_t bank_regs_[8] = {0};

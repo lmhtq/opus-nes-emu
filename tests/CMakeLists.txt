@@ -10,6 +10,10 @@ set(UNIT_TESTS
     input/input_test
     replay/replay_test
     presets/presets_test
+    savestate/savestate_test
+    social/social_test
+    audio/scene_test
+    video/widescreen_test
 )
 
 foreach(t ${UNIT_TESTS})

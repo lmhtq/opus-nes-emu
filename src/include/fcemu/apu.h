@@ -31,6 +31,9 @@ public:
     int16_t get_channel_output(ApuChannel ch) const;
     bool    irq_pending() const { return frame_irq_ || dmc_.irq_flag; }
 
+    void serialize(class Serializer& s) const;
+    void deserialize(class Deserializer& d);
+
 private:
     struct Pulse {
         bool   enabled = false;

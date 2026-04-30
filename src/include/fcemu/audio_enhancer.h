@@ -46,7 +46,15 @@ public:
     bool load_remix_track(const std::string& track_name, const std::string& file_path);
     void enable_remix(bool enable);
     void set_remix_volume(float vol);
+    // Trigger a one-shot mix-in of a previously loaded raw S16-LE 44.1kHz
+    // stereo track. Mixes during subsequent process_samples() calls until
+    // the source is exhausted.
+    void trigger_remix_oneshot(const std::string& track_name);
+
+    // Apply a named scene preset to EQ/reverb/stereo params (e.g. "action",
+    // "calm", "boss", "menu", "victory"). Unknown names are no-ops.
     void set_scene(const std::string& scene);
+    const std::string& current_scene() const { return current_scene_; }
     VisualizationData get_visualization() const;
 
 private:
@@ -57,7 +65,11 @@ private:
     float bass_boost_ = 0.0f;
     float treble_boost_ = 0.0f;
     bool normalization_ = false;
-    std::map<std::string, std::string> remix_tracks_;
+    std::map<std::string, std::string> remix_tracks_;          // name -> path
+    std::map<std::string, std::vector<int16_t>> remix_pcm_;    // name -> raw S16
+    std::vector<int16_t>                       active_remix_;  // current one-shot
+    size_t                                     remix_pos_ = 0;
+    float                                      remix_vol_ = 0.7f;
     bool remix_enabled_ = false;
     std::string current_scene_;
     VisualizationData vis_data_;

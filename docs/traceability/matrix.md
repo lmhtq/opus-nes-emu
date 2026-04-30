@@ -26,10 +26,10 @@ docs/hardware/* → docs/specs/REQ-*.md
 | REQ-004 | 内存与总线 | OVERVIEW-001 | MOD-MEMORY | FEAT-004 | `src/memory/memory.cpp` | `tests/unit/memory/` | ✅ 实现 |
 | REQ-005 | iNES 加载 + 电池 RAM | OVERVIEW-001 | MOD-CARTRIDGE | FEAT-005 | `src/cartridge/cartridge.cpp` | `tests/unit/cartridge/` | ✅ 实现 |
 | REQ-006 | 输入设备 | OVERVIEW-001 | MOD-INPUT | FEAT-006 | `src/input/input.cpp` | `tests/unit/input/` | ✅ 实现 |
-| REQ-007 | 存档/读档 (Save State) | OVERVIEW-001 | MOD-MEMORY | — | `src/main.cpp` (F1/F2 hooks) | — | ⚠️ 框架就绪 |
+| REQ-007 | 存档/读档 (Save State) | OVERVIEW-001 | MOD-MEMORY/MOD-CARTRIDGE | — | `src/savestate/savestate.cpp` + `src/main.cpp` (F1/F2) | `tests/unit/savestate/` | ✅ 实现 |
 | REQ-008 | Mapper 0–4 | OVERVIEW-001 | MOD-CARTRIDGE | — | `src/cartridge/mappers.cpp` | `tests/unit/cartridge/` | ✅ 实现 |
 | REQ-009 | 配置持久化 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (settings ini) | — | ✅ 实现 |
-| REQ-010 | Debug/性能 | OVERVIEW-001 | — | — | (主循环 60Hz 节流) | — | ⚠️ 框架就绪 |
+| REQ-010 | Debug/性能 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (F3 toggle) + `src/main.cpp` (FPS log) | — | ✅ 实现 |
 | REQ-011 | 输入设备配置（手柄/连发） | OVERVIEW-001 | MOD-INPUT/MOD-UI | — | `src/input/input.cpp` + `src/ui/ui.cpp` | `tests/unit/input/` | ✅ 实现 |
 
 ## 增强需求 (REQ-101 ~ REQ-115)
@@ -37,18 +37,18 @@ docs/hardware/* → docs/specs/REQ-*.md
 | Req | 描述 | Module | 实现 | 状态 |
 |-----|------|--------|------|------|
 | REQ-101 | 画质增强 (CRT/HDR/AA) | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` | ✅ CRT/HDR |
-| REQ-102 | 高清纹理替换 | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` | ⚠️ 接口就绪 |
-| REQ-103 | 宽屏补丁 | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` | ⚠️ 接口就绪 |
+| REQ-102 | 高清纹理替换 | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` + `src/include/fcemu/ppu.h` (TileOverrideFn) | ⚠️ 钩子就绪 |
+| REQ-103 | 宽屏补丁 | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` (320x240 输出) | ✅ 实现 |
 | REQ-104 | 视觉特效 (shake/flash) | MOD-VIDEO-ENHANCER | `src/video/video_enhancer.cpp` | ✅ 实现 |
 | REQ-105 | 预制视觉包 | MOD-PRESETS | `src/presets/presets.cpp` | ✅ 实现 |
 | REQ-106 | 立体声 / 均衡器 | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` | ✅ 实现 |
-| REQ-107 | 动态音效联动 | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` (set_scene) | ⚠️ 接口就绪 |
+| REQ-107 | 动态音效联动 | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` (set_scene + RMS 自动切换) | ✅ 实现 |
 | REQ-108 | 音频可视化 | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` (vis) | ✅ 实现 |
-| REQ-109 | 音频替换 (remix) | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` | ⚠️ 接口就绪 |
+| REQ-109 | 音频替换 (remix) | MOD-AUDIO-ENHANCER | `src/audio/audio_enhancer.cpp` (load + mix-in) | ✅ 实现 |
 | REQ-110 | 预制音频包 | MOD-PRESETS | `src/presets/presets.cpp` | ✅ 实现 |
 | REQ-111 | 手柄触觉反馈 | MOD-HAPTICS | `src/haptics/haptics.cpp` (SDL Rumble) | ✅ 实现 |
-| REQ-112 | RGB 灯光同步 | MOD-HAPTICS | `src/haptics/haptics.cpp` | ⚠️ 接口就绪 |
-| REQ-113 | 直播互动 | MOD-SOCIAL | (未实现，需第三方 SDK) | ⏸ 已设计 |
+| REQ-112 | RGB 灯光同步 | MOD-HAPTICS | `src/haptics/haptics.cpp` (主色提取 + RgbCallback) | ✅ 实现 |
+| REQ-113 | 直播互动 | MOD-SOCIAL | `src/social/social_bridge.cpp` (内置事件队列 + 文件监听) | ✅ 实现 |
 | REQ-114 | 即时精彩回放 | MOD-REPLAY | `src/replay/replay.cpp` | ✅ 环形缓冲 + PPM 导出 |
 | REQ-115 | 资源分析器 | MOD-RESOURCE | `src/resource/resource_analyzer.cpp` | ✅ tile/palette dump |
 
@@ -64,6 +64,10 @@ docs/hardware/* → docs/specs/REQ-*.md
 | `tests/unit/input/input_test.cpp`       | Unit | REQ-006                 | ✅ 通过 |
 | `tests/unit/replay/replay_test.cpp`     | Unit | REQ-114                 | ✅ 通过 |
 | `tests/unit/presets/presets_test.cpp`   | Unit | REQ-105, REQ-110        | ✅ 通过 |
+| `tests/unit/savestate/savestate_test.cpp` | Unit | REQ-007              | ✅ 通过 |
+| `tests/unit/social/social_test.cpp`     | Unit | REQ-113                 | ✅ 通过 |
+| `tests/unit/audio/scene_test.cpp`       | Unit | REQ-107, REQ-109        | ✅ 通过 |
+| `tests/unit/video/widescreen_test.cpp`  | Unit | REQ-103                 | ✅ 通过 |
 | `tests/e2e/boot_test.cpp`               | E2E  | CPU+PPU+APU+Memory+Cart 集成 | ✅ 通过 |
 
 ## 硬件文档引用 (Hardware Docs)

@@ -73,7 +73,8 @@ ctest          # 运行单元 + e2e 测试
 | Enter | Start |
 | Right Shift | Select |
 | **A / S** | **A 连发 / B 连发**（按住即自动连射 30Hz） |
-| F1 / F2 | 存档 / 读档 |
+| F1 / F2 | 存档 / 读档（写入 `<rom>.state`，载入需 mapper 一致） |
+| F3 | 切换调试覆盖层（每秒打印 FPS / 当前场景 / 主色） |
 | F5 | Reset |
 | ESC | 退出 |
 
@@ -108,7 +109,27 @@ key.p1.b=X
 key.p1.a_turbo=A
 key.p1.b_turbo=S
 turbo.rate_frames=2
+
+# 启用宽屏（320x240 输出，左右各填 32 像素）
+video.widescreen=true
+video.crt=true
+
+# 直播互动：监听一个文本文件，一行一条事件
+# 格式: gift <kind> [count] | cheer | shake [intensity] [ms] | chat <text> | vote <up|down>
+social.watch_file=/tmp/fcemu_events.txt
 ```
+
+## 高级功能
+
+| 功能 | 说明 |
+|------|------|
+| 存档/读档 (REQ-007) | F1 写入 `<rom>.state`（含 CPU/PPU/APU/RAM/Mapper bank/PRG-RAM/CHR-RAM）；F2 读回 |
+| 宽屏 (REQ-103) | 设 `video.widescreen=true` 后输出 320x240，两侧由边缘列复制并做亮度渐变 |
+| 动态音效场景 (REQ-107) | `AudioEnhancer` 每 30 帧根据 RMS 自动切换 `action`/`boss`/`menu`/`calm`，调整 EQ + 立体声宽度 + 混响 |
+| 音频 remix (REQ-109) | `AudioEnhancer::load_remix_track(name, raw_s16le_path)` + `trigger_remix_oneshot()` 把外部 PCM 一次性混入输出 |
+| RGB 灯光 (REQ-112) | `HapticsManager` 每帧从画面提取主色（16x16 网格 + 饱和度加权），通过 `set_rgb_callback()` 输出给硬件 |
+| 直播互动 (REQ-113) | `SocialBridge` 监听 ini 配置的文本文件，行内事件触发震动 / 屏幕闪 / 屏幕震 / 礼物连发 |
+| 调试覆盖层 (REQ-010) | F3 切换；每秒打印 FPS、当前场景、宽屏状态、主色 |
 
 ## 文档
 

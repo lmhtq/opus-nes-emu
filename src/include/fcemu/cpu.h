@@ -38,6 +38,10 @@ public:
 
     bool get_flag(uint8_t flag) const;
 
+    // ---- Save state -----------------------------------------------------
+    void serialize(class Serializer& s) const;
+    void deserialize(class Deserializer& d);
+
     static const uint8_t FLAG_C = 0x01;
     static const uint8_t FLAG_Z = 0x02;
     static const uint8_t FLAG_I = 0x04;

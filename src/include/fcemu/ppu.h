@@ -44,6 +44,15 @@ public:
     int  scanline() const { return scanline_; }
     int  dot() const      { return dot_; }
 
+    void serialize(class Serializer& s) const;
+    void deserialize(class Deserializer& d);
+
+    // Optional per-tile override during background blit. Callback receives
+    // the 16-byte CHR pattern (already in memory) and a destination 8x8
+    // RGBA buffer to fill if it returns true.
+    using TileOverrideFn = std::function<bool(const uint8_t* chr_pattern16, uint8_t palette_id, uint8_t out_rgba[8*8*4])>;
+    void set_tile_override(TileOverrideFn fn) { tile_override_ = std::move(fn); }
+
 private:
     Cartridge*  cart_ = nullptr;
     NmiCallback nmi_;
@@ -73,6 +82,8 @@ private:
     bool frame_complete_ = false;
 
     FrameBuffer frame_{};
+
+    TileOverrideFn tile_override_;
 
     // Helpers.
     bool rendering_enabled() const { return (ppumask_ & 0x18) != 0; }

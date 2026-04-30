@@ -213,6 +213,7 @@ void UI::process_events() {
                 if (k == SDLK_ESCAPE) { quit_ = true; break; }
                 if (k == SDLK_F1)     { snap_.save_state = true; break; }
                 if (k == SDLK_F2)     { snap_.load_state = true; break; }
+                if (k == SDLK_F3)     { debug_overlay_ = !debug_overlay_; break; }
                 if (k == SDLK_F5)     { snap_.reset = true; break; }
                 auto it = km.find(k);
                 if (it != km.end()) it->second(snap_, true);
@@ -272,9 +273,17 @@ void UI::process_events() {
     }
 }
 
-void UI::render_frame(const uint8_t* px) {
-    if (!texture_ || !renderer_) return;
-    SDL_UpdateTexture((SDL_Texture*)texture_, nullptr, px, 256 * 4);
+void UI::render_frame(const uint8_t* px, int w, int h) {
+    if (!renderer_) return;
+    if (!texture_ || w != tex_w_ || h != tex_h_) {
+        if (texture_) SDL_DestroyTexture((SDL_Texture*)texture_);
+        texture_ = SDL_CreateTexture((SDL_Renderer*)renderer_, SDL_PIXELFORMAT_RGBA32,
+                                     SDL_TEXTUREACCESS_STREAMING, w, h);
+        tex_w_ = w; tex_h_ = h;
+        SDL_RenderSetLogicalSize((SDL_Renderer*)renderer_, w, h);
+    }
+    if (!texture_) return;
+    SDL_UpdateTexture((SDL_Texture*)texture_, nullptr, px, w * 4);
     SDL_RenderClear((SDL_Renderer*)renderer_);
     SDL_RenderCopy((SDL_Renderer*)renderer_, (SDL_Texture*)texture_, nullptr, nullptr);
     SDL_RenderPresent((SDL_Renderer*)renderer_);

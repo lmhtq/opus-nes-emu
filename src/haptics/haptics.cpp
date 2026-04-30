@@ -1,6 +1,7 @@
-// haptics.cpp - SDL2-based haptics + RGB stub.
+// haptics.cpp - SDL2-based haptics + dominant-color RGB lighting hook.
 #include "fcemu/haptics.h"
 #include <SDL.h>
+#include <algorithm>
 #include <cstdio>
 
 namespace fcemu {
@@ -62,7 +63,49 @@ void HapticsManager::on_boss_scene()   { trigger_vibration(VibrationIntensity::S
 
 void HapticsManager::set_trigger_resistance(float, float) {}
 void HapticsManager::apply_vibration(VibrationIntensity, int) {}
-void HapticsManager::apply_rgb(RGBColor, LightMode, int) {}
+void HapticsManager::apply_rgb(RGBColor c, LightMode, int) {
+    if (rgb_cb_) rgb_cb_(c);
+}
 void HapticsManager::apply_trigger_resistance(float, float) {}
+
+RGBColor HapticsManager::compute_dominant_color(const uint8_t* px) const {
+    if (!px) return current_color_;
+    // Down-sample to a 16x16 grid, find the cell with the highest weighted
+    // brightness * saturation, return its average color. Cheap and effective
+    // for screen-color RGB lighting.
+    constexpr int GW = 16, GH = 16;
+    constexpr int CW = 256 / GW, CH = 240 / GH;
+    int best_score = -1;
+    int best_r = 128, best_g = 128, best_b = 128;
+    for (int gy = 0; gy < GH; ++gy) {
+        for (int gx = 0; gx < GW; ++gx) {
+            int sr = 0, sg = 0, sb = 0;
+            for (int y = 0; y < CH; ++y) {
+                for (int x = 0; x < CW; ++x) {
+                    int p = ((gy*CH + y)*256 + (gx*CW + x))*4;
+                    sr += px[p+0]; sg += px[p+1]; sb += px[p+2];
+                }
+            }
+            int n = CW * CH;
+            sr /= n; sg /= n; sb /= n;
+            int max_c = std::max(sr, std::max(sg, sb));
+            int min_c = std::min(sr, std::min(sg, sb));
+            int sat   = max_c - min_c;
+            int score = max_c + sat * 2;
+            if (score > best_score) {
+                best_score = score;
+                best_r = sr; best_g = sg; best_b = sb;
+            }
+        }
+    }
+    return RGBColor{(uint8_t)best_r, (uint8_t)best_g, (uint8_t)best_b};
+}
+
+void HapticsManager::update_from_frame(const uint8_t* px) {
+    if (!enabled_) return;
+    auto c = compute_dominant_color(px);
+    current_color_ = c;
+    apply_rgb(c, current_light_mode_, 16);
+}
 
 } // namespace fcemu

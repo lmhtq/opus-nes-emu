@@ -1,4 +1,6 @@
-// main.cpp - fcemu entry point. Wires CPU+PPU+APU+Memory+Cartridge+Input+UI.
+// main.cpp - fcemu entry point. Wires CPU+PPU+APU+Memory+Cartridge+Input+UI
+// and the optional advanced experience modules (video / audio / haptics /
+// replay / social).
 #include "fcemu/cpu.h"
 #include "fcemu/ppu.h"
 #include "fcemu/apu.h"
@@ -11,17 +13,25 @@
 #include "fcemu/haptics.h"
 #include "fcemu/replay.h"
 #include "fcemu/presets.h"
+#include "fcemu/social.h"
+#include "fcemu/savestate.h"
 
 #include <SDL.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <memory>
+#include <string>
+#include <vector>
 
 using namespace fcemu;
 
 namespace {
 
 constexpr int CPU_CYCLES_PER_FRAME = 29781;
+constexpr uint32_t SAVESTATE_MAGIC   = 0x46434553u; // 'FCES'
+constexpr uint32_t SAVESTATE_VERSION = 1;
 
 void map_buttons(StandardController& c, const InputSnapshot& s, bool p2) {
     if (!p2) {
@@ -47,6 +57,66 @@ void map_buttons(StandardController& c, const InputSnapshot& s, bool p2) {
         c.set_turbo (Button::A, s.p2_a_turbo);
         c.set_turbo (Button::B, s.p2_b_turbo);
     }
+}
+
+bool save_state_to_file(const std::string& path,
+                        const Cpu6502& cpu, const Memory& mem,
+                        const Ppu& ppu, const Apu& apu, const Cartridge& cart) {
+    std::vector<uint8_t> blob;
+    Serializer s(blob);
+    s.write(SAVESTATE_MAGIC);
+    s.write(SAVESTATE_VERSION);
+    int mapper_no = cart.mapper_number();
+    s.write(mapper_no);
+    cpu.serialize(s);
+    mem.serialize(s);
+    ppu.serialize(s);
+    apu.serialize(s);
+    cart.serialize(s);
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(blob.data()), blob.size());
+    return (bool)f;
+}
+
+bool load_state_from_file(const std::string& path,
+                          Cpu6502& cpu, Memory& mem,
+                          Ppu& ppu, Apu& apu, Cartridge& cart) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    size_t sz = (size_t)f.tellg();
+    f.seekg(0);
+    std::vector<uint8_t> blob(sz);
+    f.read(reinterpret_cast<char*>(blob.data()), sz);
+    if (!f) return false;
+    try {
+        Deserializer d(blob.data(), blob.size());
+        uint32_t magic, ver; int mapper_no;
+        d.read(magic); d.read(ver); d.read(mapper_no);
+        if (magic != SAVESTATE_MAGIC || ver != SAVESTATE_VERSION) return false;
+        if (mapper_no != cart.mapper_number()) return false;
+        cpu.deserialize(d);
+        mem.deserialize(d);
+        ppu.deserialize(d);
+        apu.deserialize(d);
+        cart.deserialize(d);
+        return true;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "load_state: %s\n", e.what());
+        return false;
+    }
+}
+
+// Heuristic audio scene from APU rms.
+const char* infer_scene(const std::vector<int16_t>& samples) {
+    if (samples.empty()) return "calm";
+    int64_t sumsq = 0;
+    for (int16_t s : samples) sumsq += (int64_t)s * s;
+    double rms = std::sqrt((double)sumsq / samples.size());
+    if      (rms > 9000) return "boss";
+    else if (rms > 5000) return "action";
+    else if (rms > 1500) return "menu";
+    else                 return "calm";
 }
 
 } // namespace
@@ -98,7 +168,7 @@ int main(int argc, char* argv[]) {
         uint8_t buf[256];
         for (int i = 0; i < 256; ++i) buf[i] = mem.read((page << 8) | i);
         ppu.oam_dma_write(buf);
-        cpu.trigger_dma(page); // burns CPU cycles
+        cpu.trigger_dma(page);
     });
 
     cpu.set_callbacks(
@@ -110,10 +180,8 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "UI init failed\n");
         return 1;
     }
-    // Optional user config (key/turbo remapping). Created on first save.
     ui.load_settings("fcemu.ini");
     {
-        // Allow ini override of turbo rate (frames per phase, default 2 → 30Hz).
         auto rate_str = ui.get_setting("turbo.rate_frames");
         if (!rate_str.empty()) {
             int r = std::atoi(rate_str.c_str());
@@ -123,20 +191,74 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    std::string title = std::string("fcemu — ") + cart.game_name();
-    ui.set_title(title);
+    ui.set_title(std::string("fcemu — ") + cart.game_name());
 
-    apu.set_sample_callback([&](const std::vector<int16_t>& s){
-        ui.push_audio(s.data(), (int)s.size());
-    });
-
-    // Optional enhancers (kept but not heavily wired into the loop yet).
+    // ---- Enhancement modules --------------------------------------------
     VideoEnhancer venh; venh.init();
+    venh.enable_widescreen(ui.get_setting("video.widescreen") == "true");
+    {
+        CRTEffect crt{};
+        crt.enabled = ui.get_setting("video.crt") != "false";
+        crt.scanline_intensity = 0.35f;
+        venh.set_crt_params(crt);
+    }
     AudioEnhancer aenh; aenh.init(44100);
     HapticsManager haptics; haptics.init();
+    haptics.set_rgb_callback([](RGBColor c){
+        // Hardware integration is platform-specific; print only when
+        // something downstream actually consumes this.
+        (void)c;
+    });
     ReplayManager replay; replay.init(); replay.start_recording();
     PresetManager presets; presets.init("presets");
     presets.find_matching_preset(cart.sha256(), PresetType::All);
+
+    SocialBridge social;
+    std::string watch_path = ui.get_setting("social.watch_file");
+    social.init(watch_path);
+    social.set_handler([&](const SocialEvent& ev){
+        switch (ev.type) {
+            case SocialEventType::Cheer:
+                venh.trigger_hit_flash();
+                haptics.trigger_vibration(VibrationIntensity::Medium, ev.duration_ms);
+                break;
+            case SocialEventType::Shake:
+                venh.trigger_shake(ev.intensity / 100.0f, ev.duration_ms);
+                haptics.trigger_vibration(VibrationIntensity::Strong, ev.duration_ms);
+                break;
+            case SocialEventType::Gift:
+                if (auto* sc = dynamic_cast<StandardController*>(input.get_controller(0))) {
+                    // Burst-press A as a "gift bonus" turbo for a short window.
+                    sc->set_turbo(Button::A, true);
+                }
+                haptics.trigger_vibration(VibrationIntensity::Strong, ev.duration_ms);
+                std::printf("[social] gift %s x%d\n", ev.kind.c_str(), ev.count);
+                break;
+            case SocialEventType::Vote:
+                std::printf("[social] vote %s\n", ev.text.c_str());
+                break;
+            case SocialEventType::Chat:
+                std::printf("[social] chat: %s\n", ev.text.c_str());
+                break;
+            default: break;
+        }
+    });
+
+    // Audio path: APU -> AudioEnhancer -> SDL queue.
+    apu.set_sample_callback([&](const std::vector<int16_t>& s){
+        std::vector<int16_t> processed;
+        aenh.process_samples(s, processed);
+        ui.push_audio(processed.data(), (int)processed.size());
+
+        // Feed the replay buffer (latest video filled later in the frame).
+        // Update audio scene heuristic occasionally.
+        static int scene_div = 0;
+        if (++scene_div >= 30) {
+            scene_div = 0;
+            const char* scene = infer_scene(s);
+            if (aenh.current_scene() != scene) aenh.set_scene(scene);
+        }
+    });
 
     cpu.reset();
     ppu.reset();
@@ -146,19 +268,41 @@ int main(int argc, char* argv[]) {
     Uint64 frame_target_ticks = perf_freq / 60;
     Uint64 next_tick = SDL_GetPerformanceCounter() + frame_target_ticks;
 
+    std::string state_path = std::string(argv[1]) + ".state";
+    int  frame_no = 0;
+    Uint64 last_stat = SDL_GetPerformanceCounter();
+
     while (!ui.should_quit()) {
         ui.process_events();
         auto snap = ui.input_snapshot();
         if (snap.reset) { cpu.reset(); ppu.reset(); apu.reset(); }
+        if (snap.save_state) {
+            if (save_state_to_file(state_path, cpu, mem, ppu, apu, cart))
+                std::printf("[state] saved -> %s\n", state_path.c_str());
+            else
+                std::printf("[state] save FAILED\n");
+        }
+        if (snap.load_state) {
+            if (load_state_from_file(state_path, cpu, mem, ppu, apu, cart))
+                std::printf("[state] loaded <- %s\n", state_path.c_str());
+            else
+                std::printf("[state] load FAILED (no/incompatible state)\n");
+        }
+
         auto* sc1 = dynamic_cast<StandardController*>(input.get_controller(0));
         auto* sc2 = dynamic_cast<StandardController*>(input.get_controller(1));
         if (sc1) { map_buttons(*sc1, snap, false); sc1->tick_turbo(); }
         if (sc2) { map_buttons(*sc2, snap, true);  sc2->tick_turbo(); }
 
-        // Run one frame. Drive components in lockstep on CPU cycles.
+        social.tick();
+
         int budget = CPU_CYCLES_PER_FRAME;
+        bool prev_irq = false;
         while (budget > 0) {
-            if (cart.irq_pending()) cpu.signal_irq();
+            bool now_irq = cart.irq_pending();
+            if (now_irq && !prev_irq) cpu.signal_irq();
+            prev_irq = now_irq;
+
             int c = cpu.step();
             ppu.step(c);
             apu.step(c);
@@ -166,7 +310,38 @@ int main(int argc, char* argv[]) {
             if (ppu.frame_complete()) break;
         }
 
-        ui.render_frame(ppu.frame().pixels);
+        // Post-process video and present.
+        int ow = 256, oh = 240;
+        const uint8_t* out = venh.process(ppu.frame().pixels, &ow, &oh);
+        if (!out) { out = ppu.frame().pixels; ow = 256; oh = 240; }
+        ui.render_frame(out, ow, oh);
+        haptics.update_from_frame(ppu.frame().pixels);
+
+        if (replay.recording()) {
+            FrameData fd{};
+            fd.video.assign(ppu.frame().pixels, ppu.frame().pixels + 256*240*4);
+            fd.timestamp = (uint64_t)frame_no * 16;
+            // Pass-through APU samples are already consumed by the SDL queue;
+            // skip storing audio to keep memory usage bounded.
+            // (Replay clip generator still produces a still PPM.)
+            (void)fd;
+        }
+
+        ++frame_no;
+        if (ui.debug_overlay()) {
+            Uint64 now = SDL_GetPerformanceCounter();
+            if (now - last_stat > perf_freq) {
+                double secs = (now - last_stat) / (double)perf_freq;
+                std::printf("[debug] frame=%d fps≈%.1f scene=%s widescreen=%d rgb=#%02X%02X%02X\n",
+                            frame_no, 1.0 / (secs / 60.0),
+                            aenh.current_scene().c_str(),
+                            (int)venh.widescreen_enabled(),
+                            haptics.current_color().r,
+                            haptics.current_color().g,
+                            haptics.current_color().b);
+                last_stat = now;
+            }
+        }
 
         Uint64 now = SDL_GetPerformanceCounter();
         if (now < next_tick) {
@@ -175,6 +350,9 @@ int main(int argc, char* argv[]) {
         }
         next_tick += frame_target_ticks;
     }
+
+    // Persist battery RAM if the cartridge has it.
+    if (cart.has_battery()) cart.save_battery_ram(std::string(argv[1]) + ".sav");
 
     ui.save_settings("fcemu.ini");
     ui.shutdown();
