@@ -45,10 +45,17 @@ fcemu 是一个 FC（Family Computer / NES）模拟器，主打**现代声光电
 
 ## 构建
 
+依赖：
+- C++17 编译器
+- CMake ≥ 3.16
+- SDL2 (`brew install sdl2` / `apt install libsdl2-dev`)
+- OpenGL（macOS / Linux / Windows 原生提供）
+
 ```bash
 mkdir build && cd build
 cmake ..
 make
+ctest          # 运行单元 + e2e 测试
 ```
 
 ## 运行
@@ -56,6 +63,18 @@ make
 ```bash
 ./fcemu path/to/rom.nes
 ```
+
+按键映射（默认）：
+
+| 键 | 功能 |
+|----|------|
+| Z / X | A / B |
+| ↑↓←→ | 方向键 |
+| Enter | Start |
+| Right Shift | Select |
+| F1 / F2 | 存档 / 读档 |
+| F5 | Reset |
+| ESC | 退出 |
 
 ## 文档
 

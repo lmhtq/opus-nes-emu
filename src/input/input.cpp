@@ -1,89 +1,83 @@
-// input.cpp - Input device emulation (partial)
+// input.cpp - Standard NES controller emulation. LSB-first shift protocol.
 #include "fcemu/input.h"
 #include <cstring>
 
 namespace fcemu {
 
 StandardController::StandardController() : shift_reg_(0), strobe_(false) {
-    std::memset(buttons_.data(), 0, sizeof(ButtonState));
-    std::memset(key_map_.data(), 0, sizeof(decltype(key_map_)::value_type) * key_map_.size());
+    buttons_.fill(false);
+    key_map_.fill(0);
 }
 
 void StandardController::strobe() {
-    strobe_ = true;
-    // Load button state into shift register
     shift_reg_ = 0;
-    for (size_t i = 0; i < static_cast<size_t>(Button::COUNT); ++i) {
+    for (size_t i = 0; i < buttons_.size(); ++i) {
         if (buttons_[i]) shift_reg_ |= (1u << i);
     }
 }
 
 uint8_t StandardController::read() {
-    if (!strobe_) {
-        if (shift_reg_ & 0x80) {
-            uint8_t result = (shift_reg_ & 0x80) ? 1 : 0;
-            shift_reg_ <<= 1;
-            if (shift_reg_ == 0) shift_reg_ = 0xFF;  // After 8 reads, return 1
-            return result;
-        } else {
-            return 0;
-        }
+    if (strobe_) {
+        return (shift_reg_ & 1) ? 1 : 0;
     }
-    return (shift_reg_ & 0x80) ? 1 : 0;
+    uint8_t v = shift_reg_ & 1;
+    shift_reg_ = (shift_reg_ >> 1) | 0x80; // After 8 reads, returns 1.
+    return v;
 }
 
-void StandardController::set_button(Button btn, bool pressed) {
-    buttons_[static_cast<size_t>(btn)] = pressed;
-}
+void StandardController::set_button(Button btn, bool pressed) { buttons_[(size_t)btn] = pressed; }
+bool StandardController::get_button(Button btn) const { return buttons_[(size_t)btn]; }
 
-bool StandardController::get_button(Button btn) const {
-    return buttons_[static_cast<size_t>(btn)];
-}
-
-// InputManager
-InputManager::InputManager() : strobe_active_(false) {
-    for (auto& c : controllers_) c.reset();
-}
+InputManager::InputManager() : strobe_active_(false) {}
 
 void InputManager::set_controller(int port, std::unique_ptr<InputDevice> device) {
     if (port >= 0 && port < 2) controllers_[port] = std::move(device);
 }
-
 InputDevice* InputManager::get_controller(int port) {
-    if (port >= 0 && port < 2) return controllers_[port].get();
-    return nullptr;
+    return (port >= 0 && port < 2) ? controllers_[port].get() : nullptr;
 }
 
 uint8_t InputManager::cpu_read(uint16_t addr) {
-    addr &= 0x0001;  // Mirror to $4016/$4017
-    int port = (addr == 1) ? 1 : 0;
-    if (controllers_[port]) return controllers_[port]->read();
-    return 0;
+    int port = (addr & 1) ? 1 : 0;
+    return controllers_[port] ? (controllers_[port]->read() | 0x40) : 0x40;
 }
 
 void InputManager::cpu_write(uint16_t addr, uint8_t val) {
-    if ((addr & 0x0001) == 0) {  // $4016
-        bool new_strobe = (val & 1) != 0;
-        if (strobe_active_ && !new_strobe) {
-            // Strobe off: start shifting
-        }
-        strobe_active_ = new_strobe;
-        if (strobe_active_) {
-            if (controllers_[0]) controllers_[0]->strobe();
-            if (controllers_[1]) controllers_[1]->strobe();
-        }
+    if ((addr & 0x0001) != 0) return; // only $4016 strobes
+    bool ns = (val & 1) != 0;
+    if (ns) {
+        if (controllers_[0]) controllers_[0]->strobe();
+        if (controllers_[1]) controllers_[1]->strobe();
+    } else if (strobe_active_) {
+        if (controllers_[0]) controllers_[0]->strobe();
+        if (controllers_[1]) controllers_[1]->strobe();
     }
+    // Set strobe state on every write so the controller re-loads while strobe is high.
+    auto* sc0 = dynamic_cast<StandardController*>(controllers_[0].get());
+    auto* sc1 = dynamic_cast<StandardController*>(controllers_[1].get());
+    if (sc0) { sc0->strobe(); }
+    if (sc1) { sc1->strobe(); }
+    strobe_active_ = ns;
 }
 
 void InputManager::on_key_down(int key_code) {
-    for (auto& c : controllers_) {
-        if (!c) continue;
-        // TODO: Map key_code to Button using key_map_
+    for (int port = 0; port < 2; ++port) {
+        auto* sc = dynamic_cast<StandardController*>(controllers_[port].get());
+        if (!sc) continue;
+        for (size_t i = 0; i < (size_t)Button::COUNT; ++i) {
+            if (sc->get_key_mapping((Button)i) == key_code) sc->set_button((Button)i, true);
+        }
     }
 }
 
 void InputManager::on_key_up(int key_code) {
-    // Similar to on_key_down
+    for (int port = 0; port < 2; ++port) {
+        auto* sc = dynamic_cast<StandardController*>(controllers_[port].get());
+        if (!sc) continue;
+        for (size_t i = 0; i < (size_t)Button::COUNT; ++i) {
+            if (sc->get_key_mapping((Button)i) == key_code) sc->set_button((Button)i, false);
+        }
+    }
 }
 
 void InputManager::on_gamepad_button(int controller, Button btn, bool pressed) {

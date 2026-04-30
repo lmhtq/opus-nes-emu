@@ -1,52 +1,172 @@
-// cartridge.cpp - Cartridge and Mapper support (partial)
+// cartridge.cpp - iNES v1 loader and Cartridge facade.
 #include "fcemu/cartridge.h"
+#include "mappers.h"
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 
 namespace fcemu {
 
-Cartridge::Cartridge() : mapper_number_(0), has_battery_(false),
-    mirror_mode_(MirrorMode::Horizontal), irq_pending_(false) {}
+namespace {
+// Tiny SHA-256 implementation (public domain style) — used only at ROM load.
+struct Sha256 {
+    uint32_t h[8];
+    uint64_t len = 0;
+    uint8_t  buf[64];
+    int      bufLen = 0;
+
+    Sha256() {
+        static const uint32_t H[8] = {
+            0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+            0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19
+        };
+        std::memcpy(h, H, sizeof(H));
+    }
+    static uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+    void block(const uint8_t* p) {
+        static const uint32_t K[64] = {
+            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+        };
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = (p[i*4] << 24) | (p[i*4+1] << 16) | (p[i*4+2] << 8) | p[i*4+3];
+        }
+        for (int i = 16; i < 64; ++i) {
+            uint32_t s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15]>>3);
+            uint32_t s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2]>>10);
+            w[i] = w[i-16] + s0 + w[i-7] + s1;
+        }
+        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t S1 = rotr(e,6)^rotr(e,11)^rotr(e,25);
+            uint32_t ch = (e & f) ^ (~e & g);
+            uint32_t t1 = hh + S1 + ch + K[i] + w[i];
+            uint32_t S0 = rotr(a,2)^rotr(a,13)^rotr(a,22);
+            uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
+            uint32_t t2 = S0 + mj;
+            hh = g; g = f; f = e; e = d + t1;
+            d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    }
+    void update(const uint8_t* data, size_t n) {
+        len += n;
+        while (n) {
+            int take = (int)((64 - bufLen) < (int)n ? (64 - bufLen) : (int)n);
+            std::memcpy(buf + bufLen, data, take);
+            bufLen += take; data += take; n -= take;
+            if (bufLen == 64) { block(buf); bufLen = 0; }
+        }
+    }
+    std::string hex() {
+        uint64_t bits = len * 8;
+        uint8_t pad[72] = {0x80};
+        int padLen = (bufLen < 56) ? (56 - bufLen) : (120 - bufLen);
+        update(pad, padLen);
+        for (int i = 0; i < 8; ++i) buf[56 + i] = (bits >> (56 - i*8)) & 0xFF;
+        block(buf);
+        std::ostringstream os;
+        for (int i = 0; i < 8; ++i) os << std::hex << std::setw(8) << std::setfill('0') << h[i];
+        return os.str();
+    }
+};
+} // namespace
+
+Cartridge::Cartridge()
+    : chr_is_ram_(false), mapper_number_(0), has_battery_(false),
+      mirror_mode_(MirrorMode::Horizontal), irq_pending_(false) {}
 
 Cartridge::~Cartridge() = default;
 
 bool Cartridge::load_rom(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
-        printf("Failed to open ROM: %s\n", path.c_str());
+        std::fprintf(stderr, "Cartridge: failed to open %s\n", path.c_str());
         return false;
     }
-    // Read entire file
-    file.seekg(0, std::ios::end);
-    size_t size = file.tellg();
-    file.seekg(0, std::ios::beg);
+    size_t size = (size_t)file.tellg();
+    file.seekg(0);
     std::vector<uint8_t> data(size);
     file.read(reinterpret_cast<char*>(data.data()), size);
-    return load_rom_data(data);
+    if (!load_rom_data(data)) return false;
+
+    // Derive game_name from filename.
+    auto slash = path.find_last_of("/\\");
+    auto dot   = path.find_last_of('.');
+    std::string base = path.substr(slash == std::string::npos ? 0 : slash + 1);
+    if (dot != std::string::npos && dot > slash) {
+        base = base.substr(0, base.size() - (path.size() - dot));
+    }
+    game_name_ = base;
+
+    // Try to load battery RAM file.
+    if (has_battery_) load_battery_ram(path + ".sav");
+    return true;
 }
 
 bool Cartridge::load_rom_data(const std::vector<uint8_t>& data) {
     if (data.size() < 16) return false;
-    // Check magic
-    if (data[0] != 'N' || data[1] != 'E' || data[2] != 'S' || data[3] != 0x1A) {
-        printf("Invalid iNES header\n");
+    if (!(data[0] == 'N' && data[1] == 'E' && data[2] == 'S' && data[3] == 0x1A)) {
+        std::fprintf(stderr, "Cartridge: invalid iNES magic\n");
         return false;
     }
     int prg_banks = data[4];
     int chr_banks = data[5];
-    int mapper_low = (data[6] >> 4) & 0x0F;
-    int mapper_high = data[7] & 0xF0;
-    mapper_number_ = mapper_low | mapper_high;
-    has_battery_ = (data[6] & 0x02) != 0;
-    // TODO: Mirror mode from flags
-    // Load PRG ROM
-    size_t prg_size = prg_banks * 16 * 1024;
-    // TODO: Skip trainer if present (data[6] & 0x04)
-    size_t offset = 16;  // Skip header
-    // TODO: Create mapper
-    printf("Loaded ROM: PRG=%d banks, CHR=%d banks, Mapper=%d\n",
-           prg_banks, chr_banks, mapper_number_);
+    uint8_t flags6 = data[6];
+    uint8_t flags7 = data[7];
+
+    mapper_number_ = (flags6 >> 4) | (flags7 & 0xF0);
+    has_battery_   = (flags6 & 0x02) != 0;
+    bool trainer   = (flags6 & 0x04) != 0;
+    bool four_scr  = (flags6 & 0x08) != 0;
+    mirror_mode_   = four_scr ? MirrorMode::FourScreen
+                              : ((flags6 & 0x01) ? MirrorMode::Vertical
+                                                 : MirrorMode::Horizontal);
+
+    size_t off = 16 + (trainer ? 512 : 0);
+    size_t prg_size = (size_t)prg_banks * 16 * 1024;
+    size_t chr_size = (size_t)chr_banks * 8  * 1024;
+
+    if (off + prg_size + chr_size > data.size()) {
+        std::fprintf(stderr, "Cartridge: file too short for declared sizes\n");
+        return false;
+    }
+
+    prg_rom_.assign(data.begin() + off, data.begin() + off + prg_size);
+    off += prg_size;
+
+    if (chr_size == 0) {
+        chr_.assign(8 * 1024, 0);
+        chr_is_ram_ = true;
+    } else {
+        chr_.assign(data.begin() + off, data.begin() + off + chr_size);
+        chr_is_ram_ = false;
+    }
+
+    prg_ram_.assign(8 * 1024, 0);
+
+    // SHA-256 of full file (used by preset matching).
+    Sha256 s;
+    s.update(data.data(), data.size());
+    sha256_ = s.hex();
+
+    mapper_ = create_mapper(mapper_number_, *this);
+    if (!mapper_) {
+        std::fprintf(stderr, "Cartridge: unsupported mapper %d\n", mapper_number_);
+        return false;
+    }
+    mapper_->reset();
+    irq_pending_ = false;
     return true;
 }
 
@@ -54,35 +174,49 @@ uint8_t Cartridge::cpu_read(uint16_t addr) {
     if (mapper_) return mapper_->cpu_read(addr);
     return 0;
 }
-
 void Cartridge::cpu_write(uint16_t addr, uint8_t val) {
     if (mapper_) mapper_->cpu_write(addr, val);
 }
-
 uint8_t Cartridge::ppu_read(uint16_t addr) {
     if (mapper_) return mapper_->ppu_read(addr);
     return 0;
 }
-
 void Cartridge::ppu_write(uint16_t addr, uint8_t val) {
     if (mapper_) mapper_->ppu_write(addr, val);
 }
 
-void Cartridge::save_battery_ram(const std::string& path) {
-    if (!has_battery_ || battery_ram_.empty()) return;
-    std::ofstream file(path, std::ios::binary);
-    file.write(reinterpret_cast<const char*>(battery_ram_.data()), battery_ram_.size());
+void Cartridge::notify_scanline() {
+    if (mapper_) mapper_->scanline_tick();
 }
 
-void Cartridge::load_battery_ram(const std::string& path) {
-    if (!has_battery_) return;
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return;
-    file.read(reinterpret_cast<char*>(battery_ram_.data()), battery_ram_.size());
+bool Cartridge::save_battery_ram(const std::string& path) const {
+    if (!has_battery_) return false;
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(prg_ram_.data()), prg_ram_.size());
+    return true;
 }
 
-void Cartridge::notify_scanline(int scanline) {
-    if (mapper_) mapper_->scanline_irq(scanline);
+bool Cartridge::load_battery_ram(const std::string& path) {
+    if (!has_battery_) return false;
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    size_t sz = (size_t)f.tellg();
+    f.seekg(0);
+    if (sz != prg_ram_.size()) return false;
+    f.read(reinterpret_cast<char*>(prg_ram_.data()), sz);
+    return true;
+}
+
+std::unique_ptr<Mapper> Cartridge::create_mapper(int number, Cartridge& cart) {
+    switch (number) {
+        case 0: return std::make_unique<Mapper0>(cart);
+        case 1: return std::make_unique<Mapper1>(cart);
+        case 2: return std::make_unique<Mapper2>(cart);
+        case 3: return std::make_unique<Mapper3>(cart);
+        case 4: return std::make_unique<Mapper4>(cart);
+    }
+    return nullptr;
 }
 
 } // namespace fcemu

@@ -15,6 +15,7 @@ set(LIB_SOURCES
     src/apu/apu.cpp
     src/memory/memory.cpp
     src/cartridge/cartridge.cpp
+    src/cartridge/mappers.cpp
     src/input/input.cpp
     src/ui/ui.cpp
     src/video/video_enhancer.cpp
@@ -31,7 +32,8 @@ include_directories(${SDL2_INCLUDE_DIRS})
 
 # 静态库
 add_library(fcemu_lib STATIC ${LIB_SOURCES})
-target_include_directories(fcemu_lib PUBLIC src/include)
+target_include_directories(fcemu_lib PUBLIC src/include ${SDL2_INCLUDE_DIRS})
+target_link_libraries(fcemu_lib PUBLIC ${SDL2_LIBRARIES})
 
 # 可执行文件
 add_executable(fcemu src/main.cpp)
