@@ -21,8 +21,16 @@ struct WindowConfig {
 enum class EmuState { Stopped, Running, Paused, StepFrame };
 
 struct InputSnapshot {
+    // Player 1
     bool a=false,b=false,select=false,start=false;
     bool up=false,down=false,left=false,right=false;
+    // Player 1 turbo (auto-fire while held)
+    bool a_turbo=false, b_turbo=false;
+    // Player 2 (kept compact — same layout as P1)
+    bool p2_a=false, p2_b=false, p2_select=false, p2_start=false;
+    bool p2_up=false, p2_down=false, p2_left=false, p2_right=false;
+    bool p2_a_turbo=false, p2_b_turbo=false;
+    // System
     bool quit=false;
     bool reset=false;
     bool save_state=false;
@@ -71,6 +79,7 @@ private:
     void* renderer_ = nullptr;     // SDL_Renderer*
     void* texture_  = nullptr;     // SDL_Texture*
     uint32_t audio_device_ = 0;
+    void* gamepads_[4] = {nullptr,nullptr,nullptr,nullptr}; // SDL_GameController*
 
     InputSnapshot snap_{};
     std::map<std::string, std::string> settings_;

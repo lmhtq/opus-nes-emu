@@ -23,15 +23,30 @@ namespace {
 
 constexpr int CPU_CYCLES_PER_FRAME = 29781;
 
-void map_buttons(StandardController& c, const InputSnapshot& s) {
-    c.set_button(Button::A,      s.a);
-    c.set_button(Button::B,      s.b);
-    c.set_button(Button::Select, s.select);
-    c.set_button(Button::Start,  s.start);
-    c.set_button(Button::Up,     s.up);
-    c.set_button(Button::Down,   s.down);
-    c.set_button(Button::Left,   s.left);
-    c.set_button(Button::Right,  s.right);
+void map_buttons(StandardController& c, const InputSnapshot& s, bool p2) {
+    if (!p2) {
+        c.set_button(Button::A,      s.a);
+        c.set_button(Button::B,      s.b);
+        c.set_button(Button::Select, s.select);
+        c.set_button(Button::Start,  s.start);
+        c.set_button(Button::Up,     s.up);
+        c.set_button(Button::Down,   s.down);
+        c.set_button(Button::Left,   s.left);
+        c.set_button(Button::Right,  s.right);
+        c.set_turbo (Button::A, s.a_turbo);
+        c.set_turbo (Button::B, s.b_turbo);
+    } else {
+        c.set_button(Button::A,      s.p2_a);
+        c.set_button(Button::B,      s.p2_b);
+        c.set_button(Button::Select, s.p2_select);
+        c.set_button(Button::Start,  s.p2_start);
+        c.set_button(Button::Up,     s.p2_up);
+        c.set_button(Button::Down,   s.p2_down);
+        c.set_button(Button::Left,   s.p2_left);
+        c.set_button(Button::Right,  s.p2_right);
+        c.set_turbo (Button::A, s.p2_a_turbo);
+        c.set_turbo (Button::B, s.p2_b_turbo);
+    }
 }
 
 } // namespace
@@ -95,6 +110,19 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "UI init failed\n");
         return 1;
     }
+    // Optional user config (key/turbo remapping). Created on first save.
+    ui.load_settings("fcemu.ini");
+    {
+        // Allow ini override of turbo rate (frames per phase, default 2 → 30Hz).
+        auto rate_str = ui.get_setting("turbo.rate_frames");
+        if (!rate_str.empty()) {
+            int r = std::atoi(rate_str.c_str());
+            for (int p = 0; p < 2; ++p) {
+                if (auto* sc = dynamic_cast<StandardController*>(input.get_controller(p)))
+                    sc->set_turbo_rate(r > 0 ? r : 2);
+            }
+        }
+    }
     std::string title = std::string("fcemu — ") + cart.game_name();
     ui.set_title(title);
 
@@ -122,9 +150,10 @@ int main(int argc, char* argv[]) {
         ui.process_events();
         auto snap = ui.input_snapshot();
         if (snap.reset) { cpu.reset(); ppu.reset(); apu.reset(); }
-        if (auto* sc = dynamic_cast<StandardController*>(input.get_controller(0))) {
-            map_buttons(*sc, snap);
-        }
+        auto* sc1 = dynamic_cast<StandardController*>(input.get_controller(0));
+        auto* sc2 = dynamic_cast<StandardController*>(input.get_controller(1));
+        if (sc1) { map_buttons(*sc1, snap, false); sc1->tick_turbo(); }
+        if (sc2) { map_buttons(*sc2, snap, true);  sc2->tick_turbo(); }
 
         // Run one frame. Drive components in lockstep on CPU cycles.
         int budget = CPU_CYCLES_PER_FRAME;
@@ -147,6 +176,7 @@ int main(int argc, char* argv[]) {
         next_tick += frame_target_ticks;
     }
 
+    ui.save_settings("fcemu.ini");
     ui.shutdown();
     return 0;
 }

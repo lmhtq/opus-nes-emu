@@ -72,9 +72,43 @@ ctest          # 运行单元 + e2e 测试
 | ↑↓←→ | 方向键 |
 | Enter | Start |
 | Right Shift | Select |
+| **A / S** | **A 连发 / B 连发**（按住即自动连射 30Hz） |
 | F1 / F2 | 存档 / 读档 |
 | F5 | Reset |
 | ESC | 退出 |
+
+### Player 2 默认键位
+| 键 | 功能 |
+|----|------|
+| I/J/K/L | ↑/←/↓/→ |
+| G / H | A / B |
+| V / B | Select / Start |
+| T / Y | A 连发 / B 连发 |
+
+### 手柄 (USB / Bluetooth, SDL_GameController)
+插入即用，最多 2 名玩家，支持热插拔。
+
+| 手柄按钮 | NES 映射 |
+|----------|----------|
+| 右脸键 (B / Circle) | A |
+| 下脸键 (A / Cross)  | B |
+| 上脸键 (Y / Triangle) | A 连发 |
+| 左脸键 (X / Square)   | B 连发 |
+| Back / Share | Select |
+| Start / Options | Start |
+| 十字键 / 左摇杆 | 方向键 |
+| Guide / PS | Reset |
+
+### 自定义键位 (`fcemu.ini`)
+启动时读取，退出时保存。键名使用 SDL 标准（如 `Z`, `Up`, `Return`, `Right Shift`），动作前缀 `p1.` / `p2.`：
+
+```ini
+key.p1.a=Z
+key.p1.b=X
+key.p1.a_turbo=A
+key.p1.b_turbo=S
+turbo.rate_frames=2
+```
 
 ## 文档
 

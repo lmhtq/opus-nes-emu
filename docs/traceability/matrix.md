@@ -30,6 +30,7 @@ docs/hardware/* → docs/specs/REQ-*.md
 | REQ-008 | Mapper 0–4 | OVERVIEW-001 | MOD-CARTRIDGE | — | `src/cartridge/mappers.cpp` | `tests/unit/cartridge/` | ✅ 实现 |
 | REQ-009 | 配置持久化 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (settings ini) | — | ✅ 实现 |
 | REQ-010 | Debug/性能 | OVERVIEW-001 | — | — | (主循环 60Hz 节流) | — | ⚠️ 框架就绪 |
+| REQ-011 | 输入设备配置（手柄/连发） | OVERVIEW-001 | MOD-INPUT/MOD-UI | — | `src/input/input.cpp` + `src/ui/ui.cpp` | `tests/unit/input/` | ✅ 实现 |
 
 ## 增强需求 (REQ-101 ~ REQ-115)
 

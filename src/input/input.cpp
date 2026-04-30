@@ -12,7 +12,16 @@ StandardController::StandardController() : shift_reg_(0), strobe_(false) {
 void StandardController::strobe() {
     shift_reg_ = 0;
     for (size_t i = 0; i < buttons_.size(); ++i) {
-        if (buttons_[i]) shift_reg_ |= (1u << i);
+        bool eff = buttons_[i];
+        if (eff && turbo_[i] && !turbo_phase_) eff = false;
+        if (eff) shift_reg_ |= (1u << i);
+    }
+}
+
+void StandardController::tick_turbo() {
+    if (++turbo_count_ >= turbo_rate_) {
+        turbo_count_ = 0;
+        turbo_phase_ = !turbo_phase_;
     }
 }
 

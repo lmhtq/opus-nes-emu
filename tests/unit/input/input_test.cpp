@@ -17,6 +17,29 @@ int main() {
     }
     // After 8 reads, must return 1.
     assert(c.read() == 1);
+
+    // ---- Turbo (rapid-fire) test ----------------------------------------
+    fcemu::StandardController t;
+    t.set_button(fcemu::Button::A, true);
+    t.set_turbo(fcemu::Button::A, true);
+    t.set_turbo_rate(1); // toggle every frame
+    auto read_a = [&]{ t.strobe(); return (int)(t.read() & 1); };
+
+    // Phase starts low → A appears released even though held.
+    int v0 = read_a();
+    t.tick_turbo();
+    int v1 = read_a();
+    t.tick_turbo();
+    int v2 = read_a();
+    // Must oscillate between 0 and 1 across frames.
+    assert(v0 != v1);
+    assert(v1 != v2);
+    assert(v0 == v2);
+
+    // Disabling turbo → A is steady high.
+    t.set_turbo(fcemu::Button::A, false);
+    for (int i = 0; i < 4; ++i) { assert(read_a() == 1); t.tick_turbo(); }
+
     printf("PASS\n");
     return 0;
 }

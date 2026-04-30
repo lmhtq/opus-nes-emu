@@ -1,15 +1,77 @@
-// ui.cpp - SDL2-based window + renderer + audio queue.
+// ui.cpp - SDL2-based window + renderer + audio queue + keyboard/gamepad input.
 #include "fcemu/ui.h"
 
 #include <SDL.h>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace fcemu {
 
 UI::UI() = default;
 UI::~UI() { shutdown(); }
+
+// ---- Default keyboard bindings (overridden by load_settings) ----------------
+//   Player 1: arrows + Z/X (A/B) + RShift/Return (Select/Start)
+//   Player 2: WASD + G/H (A/B) + V/B (Select/Start)
+//   Turbo:    A=key_a (P1), B=key_s (P1); J (P2-A turbo), K (P2-B turbo)
+struct KeyBinding { SDL_Keycode key; void (*apply)(InputSnapshot&, bool); };
+
+static InputSnapshot g_snap_defaults{};
+
+static void k_p1_a(InputSnapshot& s, bool d){ s.a = d; }
+static void k_p1_b(InputSnapshot& s, bool d){ s.b = d; }
+static void k_p1_sel(InputSnapshot& s, bool d){ s.select = d; }
+static void k_p1_start(InputSnapshot& s, bool d){ s.start = d; }
+static void k_p1_up(InputSnapshot& s, bool d){ s.up = d; }
+static void k_p1_dn(InputSnapshot& s, bool d){ s.down = d; }
+static void k_p1_lf(InputSnapshot& s, bool d){ s.left = d; }
+static void k_p1_rt(InputSnapshot& s, bool d){ s.right = d; }
+static void k_p1_at(InputSnapshot& s, bool d){ s.a_turbo = d; }
+static void k_p1_bt(InputSnapshot& s, bool d){ s.b_turbo = d; }
+
+static void k_p2_a(InputSnapshot& s, bool d){ s.p2_a = d; }
+static void k_p2_b(InputSnapshot& s, bool d){ s.p2_b = d; }
+static void k_p2_sel(InputSnapshot& s, bool d){ s.p2_select = d; }
+static void k_p2_start(InputSnapshot& s, bool d){ s.p2_start = d; }
+static void k_p2_up(InputSnapshot& s, bool d){ s.p2_up = d; }
+static void k_p2_dn(InputSnapshot& s, bool d){ s.p2_down = d; }
+static void k_p2_lf(InputSnapshot& s, bool d){ s.p2_left = d; }
+static void k_p2_rt(InputSnapshot& s, bool d){ s.p2_right = d; }
+static void k_p2_at(InputSnapshot& s, bool d){ s.p2_a_turbo = d; }
+static void k_p2_bt(InputSnapshot& s, bool d){ s.p2_b_turbo = d; }
+
+// Action name → setter, for ini-driven remapping.
+static const std::unordered_map<std::string, void(*)(InputSnapshot&, bool)>& action_table() {
+    static const std::unordered_map<std::string, void(*)(InputSnapshot&, bool)> t = {
+        {"p1.a",k_p1_a},{"p1.b",k_p1_b},{"p1.select",k_p1_sel},{"p1.start",k_p1_start},
+        {"p1.up",k_p1_up},{"p1.down",k_p1_dn},{"p1.left",k_p1_lf},{"p1.right",k_p1_rt},
+        {"p1.a_turbo",k_p1_at},{"p1.b_turbo",k_p1_bt},
+        {"p2.a",k_p2_a},{"p2.b",k_p2_b},{"p2.select",k_p2_sel},{"p2.start",k_p2_start},
+        {"p2.up",k_p2_up},{"p2.down",k_p2_dn},{"p2.left",k_p2_lf},{"p2.right",k_p2_rt},
+        {"p2.a_turbo",k_p2_at},{"p2.b_turbo",k_p2_bt},
+    };
+    return t;
+}
+
+// Defaults applied when no settings exist.
+static std::unordered_map<SDL_Keycode, void(*)(InputSnapshot&, bool)> default_keymap() {
+    return {
+        // Player 1: arrows + Z/X (A/B), RShift/Return (Sel/Start), A/S turbo.
+        {SDLK_z, k_p1_a},      {SDLK_x, k_p1_b},
+        {SDLK_RSHIFT, k_p1_sel},{SDLK_RETURN, k_p1_start},
+        {SDLK_UP, k_p1_up},    {SDLK_DOWN, k_p1_dn},
+        {SDLK_LEFT, k_p1_lf},  {SDLK_RIGHT, k_p1_rt},
+        {SDLK_a, k_p1_at},     {SDLK_s, k_p1_bt},
+        // Player 2: IJKL (DPad) + G/H (A/B), V/B (Sel/Start), T/Y turbo.
+        {SDLK_i, k_p2_up},     {SDLK_k, k_p2_dn},
+        {SDLK_j, k_p2_lf},     {SDLK_l, k_p2_rt},
+        {SDLK_g, k_p2_a},      {SDLK_h, k_p2_b},
+        {SDLK_v, k_p2_sel},    {SDLK_b, k_p2_start},
+        {SDLK_t, k_p2_at},     {SDLK_y, k_p2_bt},
+    };
+}
 
 bool UI::init(const WindowConfig& cfg) {
     cfg_ = cfg;
@@ -45,11 +107,27 @@ bool UI::init(const WindowConfig& cfg) {
     audio_device_ = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (audio_device_ != 0) SDL_PauseAudioDevice(audio_device_, 0);
 
+    // Open up to 4 gamepads (auto-detect).
+    int n = SDL_NumJoysticks();
+    int slot = 0;
+    for (int i = 0; i < n && slot < 4; ++i) {
+        if (SDL_IsGameController(i)) {
+            SDL_GameController* gc = SDL_GameControllerOpen(i);
+            if (gc) {
+                gamepads_[slot++] = gc;
+                std::printf("Gamepad %d connected: %s\n", slot - 1, SDL_GameControllerName(gc));
+            }
+        }
+    }
+
     state_ = EmuState::Running;
     return true;
 }
 
 void UI::shutdown() {
+    for (int i = 0; i < 4; ++i) {
+        if (gamepads_[i]) { SDL_GameControllerClose((SDL_GameController*)gamepads_[i]); gamepads_[i] = nullptr; }
+    }
     if (audio_device_) { SDL_CloseAudioDevice(audio_device_); audio_device_ = 0; }
     if (texture_)  { SDL_DestroyTexture((SDL_Texture*)texture_); texture_ = nullptr; }
     if (renderer_) { SDL_DestroyRenderer((SDL_Renderer*)renderer_); renderer_ = nullptr; }
@@ -57,37 +135,140 @@ void UI::shutdown() {
     if (SDL_WasInit(0)) SDL_Quit();
 }
 
-static void apply_key(InputSnapshot& s, SDL_Keycode k, bool down) {
-    switch (k) {
-        case SDLK_z:      s.a = down; break;
-        case SDLK_x:      s.b = down; break;
-        case SDLK_RSHIFT: s.select = down; break;
-        case SDLK_RETURN: s.start = down; break;
-        case SDLK_UP:     s.up = down; break;
-        case SDLK_DOWN:   s.down = down; break;
-        case SDLK_LEFT:   s.left = down; break;
-        case SDLK_RIGHT:  s.right = down; break;
-        case SDLK_F1:     if (down) s.save_state = true; break;
-        case SDLK_F2:     if (down) s.load_state = true; break;
-        case SDLK_F5:     if (down) s.reset = true; break;
+// Build effective keyboard map: defaults overlaid by ini "key.<action>=<sdlk>".
+static std::unordered_map<SDL_Keycode, void(*)(InputSnapshot&, bool)>
+build_keymap(const std::map<std::string, std::string>& settings) {
+    auto km = default_keymap();
+    // Allow ini overrides like:
+    //   key.p1.a=z   key.p1.b=x   key.p1.up=up   key.p1.a_turbo=a
+    // value can be either an SDL_Keycode int or an SDL key name (e.g. "Z","Up","Return").
+    for (auto& kv : settings) {
+        if (kv.first.rfind("key.", 0) != 0) continue;
+        const std::string action = kv.first.substr(4);
+        auto it = action_table().find(action);
+        if (it == action_table().end()) continue;
+        SDL_Keycode k = SDLK_UNKNOWN;
+        try { k = (SDL_Keycode)std::stoi(kv.second); }
+        catch (...) { k = SDL_GetKeyFromName(kv.second.c_str()); }
+        if (k == SDLK_UNKNOWN) continue;
+        // remove any previous binding of this action
+        for (auto m = km.begin(); m != km.end(); ) {
+            if (m->second == it->second) m = km.erase(m); else ++m;
+        }
+        km[k] = it->second;
+    }
+    return km;
+}
+
+static void apply_gamepad_button(InputSnapshot& s, int player, SDL_GameControllerButton b, bool down) {
+    auto set_p1 = [&](void(*f)(InputSnapshot&,bool)){ f(s, down); };
+    auto set_p2 = [&](void(*f)(InputSnapshot&,bool)){ f(s, down); };
+    // Convention: NES A = right face button (SDL B); NES B = bottom face (SDL A).
+    switch (b) {
+        case SDL_CONTROLLER_BUTTON_B:        player==0 ? set_p1(k_p1_a)     : set_p2(k_p2_a); break;
+        case SDL_CONTROLLER_BUTTON_A:        player==0 ? set_p1(k_p1_b)     : set_p2(k_p2_b); break;
+        case SDL_CONTROLLER_BUTTON_Y:        player==0 ? set_p1(k_p1_at)    : set_p2(k_p2_at); break; // turbo A
+        case SDL_CONTROLLER_BUTTON_X:        player==0 ? set_p1(k_p1_bt)    : set_p2(k_p2_bt); break; // turbo B
+        case SDL_CONTROLLER_BUTTON_BACK:     player==0 ? set_p1(k_p1_sel)   : set_p2(k_p2_sel); break;
+        case SDL_CONTROLLER_BUTTON_START:    player==0 ? set_p1(k_p1_start) : set_p2(k_p2_start); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:    player==0 ? set_p1(k_p1_up)  : set_p2(k_p2_up); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:  player==0 ? set_p1(k_p1_dn)  : set_p2(k_p2_dn); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  player==0 ? set_p1(k_p1_lf)  : set_p2(k_p2_lf); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: player==0 ? set_p1(k_p1_rt)  : set_p2(k_p2_rt); break;
+        case SDL_CONTROLLER_BUTTON_GUIDE:    if (down) s.reset = true; break;
         default: break;
+    }
+}
+
+static void apply_gamepad_axes(InputSnapshot& s, int player, SDL_GameController* gc) {
+    // Treat the left analog stick as a virtual D-pad (deadzone 8000/32768).
+    constexpr int DZ = 8000;
+    int x = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
+    int y = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+    bool left  = x < -DZ, right = x > DZ;
+    bool up    = y < -DZ, down  = y > DZ;
+    if (player == 0) {
+        if (left)  s.left = true;
+        if (right) s.right = true;
+        if (up)    s.up = true;
+        if (down)  s.down = true;
+    } else {
+        if (left)  s.p2_left = true;
+        if (right) s.p2_right = true;
+        if (up)    s.p2_up = true;
+        if (down)  s.p2_down = true;
     }
 }
 
 void UI::process_events() {
     snap_.save_state = snap_.load_state = snap_.reset = false;
+    auto km = build_keymap(settings_);
+
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
             case SDL_QUIT: quit_ = true; break;
-            case SDL_KEYDOWN:
-                if (ev.key.keysym.sym == SDLK_ESCAPE) { quit_ = true; }
-                else apply_key(snap_, ev.key.keysym.sym, true);
+            case SDL_KEYDOWN: {
+                SDL_Keycode k = ev.key.keysym.sym;
+                if (k == SDLK_ESCAPE) { quit_ = true; break; }
+                if (k == SDLK_F1)     { snap_.save_state = true; break; }
+                if (k == SDLK_F2)     { snap_.load_state = true; break; }
+                if (k == SDLK_F5)     { snap_.reset = true; break; }
+                auto it = km.find(k);
+                if (it != km.end()) it->second(snap_, true);
                 break;
-            case SDL_KEYUP:
-                apply_key(snap_, ev.key.keysym.sym, false);
+            }
+            case SDL_KEYUP: {
+                auto it = km.find(ev.key.keysym.sym);
+                if (it != km.end()) it->second(snap_, false);
                 break;
+            }
+            case SDL_CONTROLLERBUTTONDOWN:
+            case SDL_CONTROLLERBUTTONUP: {
+                int player = -1;
+                SDL_GameController* src = SDL_GameControllerFromInstanceID(ev.cbutton.which);
+                for (int i = 0; i < 2; ++i) {
+                    if (gamepads_[i] && (SDL_GameController*)gamepads_[i] == src) { player = i; break; }
+                }
+                if (player < 0) break;
+                apply_gamepad_button(snap_, player,
+                                     (SDL_GameControllerButton)ev.cbutton.button,
+                                     ev.type == SDL_CONTROLLERBUTTONDOWN);
+                break;
+            }
+            case SDL_CONTROLLERDEVICEADDED: {
+                if (SDL_IsGameController(ev.cdevice.which)) {
+                    for (int i = 0; i < 4; ++i) {
+                        if (!gamepads_[i]) {
+                            gamepads_[i] = SDL_GameControllerOpen(ev.cdevice.which);
+                            if (gamepads_[i])
+                                std::printf("Gamepad %d hot-plugged: %s\n", i,
+                                            SDL_GameControllerName((SDL_GameController*)gamepads_[i]));
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+            case SDL_CONTROLLERDEVICEREMOVED: {
+                for (int i = 0; i < 4; ++i) {
+                    if (gamepads_[i] && SDL_JoystickInstanceID(
+                            SDL_GameControllerGetJoystick((SDL_GameController*)gamepads_[i]))
+                            == ev.cdevice.which) {
+                        SDL_GameControllerClose((SDL_GameController*)gamepads_[i]);
+                        gamepads_[i] = nullptr;
+                        std::printf("Gamepad %d disconnected\n", i);
+                        break;
+                    }
+                }
+                break;
+            }
         }
+    }
+
+    // Poll analog sticks each frame (axis events are noisy; sample directly).
+    for (int p = 0; p < 2; ++p) {
+        if (gamepads_[p]) apply_gamepad_axes(snap_, p, (SDL_GameController*)gamepads_[p]);
     }
 }
 
@@ -101,7 +282,6 @@ void UI::render_frame(const uint8_t* px) {
 
 void UI::push_audio(const int16_t* samples, int n_samples_stereo) {
     if (!audio_device_) return;
-    // Drop if backlog is too large to keep latency bounded.
     if (SDL_GetQueuedAudioSize(audio_device_) > 8192 * 4) return;
     SDL_QueueAudio(audio_device_, samples, (Uint32)(n_samples_stereo * sizeof(int16_t)));
 }

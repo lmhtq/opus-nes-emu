@@ -43,6 +43,10 @@ target_link_libraries(fcemu
     OpenGL::GL
 )
 
+# 无 SDL 依赖的 headless 跑分/冒烟工具
+add_executable(fcemu_headless tools/headless.cpp)
+target_link_libraries(fcemu_headless fcemu_lib)
+
 # 测试
 enable_testing()
 add_subdirectory(tests)
