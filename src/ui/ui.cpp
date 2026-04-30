@@ -155,6 +155,9 @@ build_keymap(const std::map<std::string, std::string>& settings) {
         for (auto m = km.begin(); m != km.end(); ) {
             if (m->second == it->second) m = km.erase(m); else ++m;
         }
+        // If this key is already bound to a different action, the new binding
+        // wins; the previous owner will be silently lost (a conflict). The UI
+        // surfaces this via UI::find_key_conflicts() at startup / on demand.
         km[k] = it->second;
     }
     return km;
@@ -377,6 +380,7 @@ void UI::load_rom(const std::string& path) {
 }
 
 void UI::set_setting(const std::string& key, const std::string& value) { settings_[key] = value; }
+void UI::clear_setting(const std::string& key) { settings_.erase(key); }
 std::string UI::get_setting(const std::string& key) const {
     auto it = settings_.find(key);
     return it == settings_.end() ? std::string{} : it->second;
@@ -426,6 +430,42 @@ void UI::seed_default_bindings() {
             if (name && *name) settings_[skey] = name;
         }
     }
+}
+
+void UI::reset_default_bindings() {
+    for (auto& act : action_ids()) settings_.erase(std::string("key.") + act);
+    seed_default_bindings();
+}
+
+std::string UI::find_action_for_key(const std::string& key_name,
+                                    const std::string& except_action) const {
+    SDL_Keycode want = SDL_GetKeyFromName(key_name.c_str());
+    if (want == SDLK_UNKNOWN) return {};
+    for (auto& kv : settings_) {
+        if (kv.first.rfind("key.", 0) != 0) continue;
+        std::string act = kv.first.substr(4);
+        if (act == except_action) continue;
+        SDL_Keycode k = SDL_GetKeyFromName(kv.second.c_str());
+        if (k == want) return act;
+    }
+    return {};
+}
+
+std::vector<std::pair<std::string, std::string>> UI::find_key_conflicts() const {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::map<SDL_Keycode, std::vector<std::string>> by_key;
+    for (auto& kv : settings_) {
+        if (kv.first.rfind("key.", 0) != 0) continue;
+        SDL_Keycode k = SDL_GetKeyFromName(kv.second.c_str());
+        if (k == SDLK_UNKNOWN) continue;
+        by_key[k].push_back(kv.first.substr(4));
+    }
+    for (auto& kv : by_key) {
+        if (kv.second.size() < 2) continue;
+        const char* nm = SDL_GetKeyName(kv.first);
+        for (auto& act : kv.second) out.emplace_back(act, nm ? nm : "?");
+    }
+    return out;
 }
 
 const std::vector<std::string>& UI::action_ids() {

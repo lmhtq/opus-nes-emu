@@ -85,15 +85,26 @@ public:
     // Settings (in-memory + simple ini persistence).
     void        set_setting(const std::string& key, const std::string& value);
     std::string get_setting(const std::string& key) const;
+    void        clear_setting(const std::string& key);
     bool save_settings(const std::string& path);
     bool load_settings(const std::string& path);
 
     // Fill settings_ with default key bindings for any missing "key.*" entry.
     // Idempotent — call after load_settings to ensure menu always has values.
     void seed_default_bindings();
+    // Wipe every "key.<action>" entry, then re-seed from defaults.
+    void reset_default_bindings();
 
     // List of all rebindable action IDs (e.g. "p1.a") for menu construction.
     static const std::vector<std::string>& action_ids();
+
+    // If `key_name` is currently bound to some action other than `except_action`,
+    // returns that action id; otherwise returns "". Comparison is case-normalized
+    // through SDL's key-name table.
+    std::string find_action_for_key(const std::string& key_name,
+                                    const std::string& except_action = {}) const;
+    // Returns all (action, key_name) pairs whose key collides with another action.
+    std::vector<std::pair<std::string, std::string>> find_key_conflicts() const;
 
     void set_rom_load_callback(RomLoadCallback cb) { rom_cb_ = std::move(cb); }
     void set_state_callback(StateCallback cb) { state_cb_ = std::move(cb); }

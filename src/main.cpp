@@ -186,6 +186,14 @@ int main(int argc, char* argv[]) {
     ui.seed_default_bindings();
     ui.set_hud_visible(ui.get_setting("ui.hud") == "true");
     {
+        auto cs = ui.find_key_conflicts();
+        if (!cs.empty()) {
+            std::printf("[ui] WARNING: %zu key binding conflict(s) detected:\n", cs.size());
+            for (auto& p : cs) std::printf("  %s = %s\n", p.first.c_str(), p.second.c_str());
+            std::printf("[ui]   open Menu -> Controls -> Scan for key conflicts to review.\n");
+        }
+    }
+    {
         auto rate_str = ui.get_setting("turbo.rate_frames");
         if (!rate_str.empty()) {
             int r = std::atoi(rate_str.c_str());
@@ -311,6 +319,15 @@ int main(int argc, char* argv[]) {
                     return v.empty() ? std::string("?") : v;
                 },
                 [&, act](const std::string& name){
+                    // Detect & auto-resolve conflicts: if another action already
+                    // owns this key, unbind the other one and warn the user.
+                    std::string other = ui.find_action_for_key(name, act);
+                    if (!other.empty()) {
+                        ui.clear_setting("key." + other);
+                        ui.overlay().post_toast(
+                            other + " unbound (was " + name + ")",
+                            2.0f, Overlay::Red);
+                    }
                     ui.set_setting("key." + act, name);
                     ui.overlay().post_toast(act + " -> " + name, 1.2f, Overlay::Yellow);
                 }));
@@ -324,14 +341,22 @@ int main(int argc, char* argv[]) {
     m_controls->add(MenuItem::submenu("Player 1 keys", m_p1));
     m_controls->add(MenuItem::submenu("Player 2 keys", m_p2));
     m_controls->add(MenuItem::action("Reset all keys to default", [&]{
-        for (auto& act : UI::action_ids()) ui.set_setting("key." + act, "");
-        // Re-seed (only fills empty values).
-        for (auto& act : UI::action_ids()) ui.set_setting("key." + act, "");
-        // Clear and reseed by removing entries:
-        // (set_setting can't erase; rely on seed which only fills missing.)
-        // Workaround: blank means "?" in menu, but build_keymap will skip blanks.
-        ui.seed_default_bindings(); // no-op if non-empty; values were not empty earlier
-        ui.overlay().post_toast("Bindings reset (restart for full effect)", 2.0f, Overlay::Yellow);
+        ui.reset_default_bindings();
+        ui.overlay().post_toast("All key bindings reset to defaults", 2.0f, Overlay::Yellow);
+    }));
+    m_controls->add(MenuItem::action("Scan for key conflicts", [&]{
+        auto cs = ui.find_key_conflicts();
+        if (cs.empty()) {
+            ui.overlay().post_toast("No key conflicts.", 1.5f, Overlay::Green);
+        } else {
+            std::ostringstream os;
+            os << cs.size() << " conflict(s): ";
+            for (size_t i = 0; i < cs.size() && i < 4; ++i) {
+                if (i) os << ", ";
+                os << cs[i].first << "=" << cs[i].second;
+            }
+            ui.overlay().post_toast(os.str(), 3.0f, Overlay::Red);
+        }
     }));
 
     // Settings root

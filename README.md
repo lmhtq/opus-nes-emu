@@ -139,6 +139,7 @@ social.watch_file=/tmp/fcemu_events.txt
 - **Tab** 随时切换屏幕 HUD（FPS / 当前音频场景 / 宽屏状态 / RGB 主色 / 是否暂停）。
 - **Toast 通知**：存档成功、场景切换、社交事件（cheer / gift / chat）、键位绑定完成等都会在右下角弹出 1.5–2 秒。
 - 所有菜单内修改即时落盘到 `fcemu.ini`，下次启动自动恢复。
+- **键位冲突自动处理**：在 Controls 子菜单里把某个键绑给一个动作时，如果该键已被占用，原占用动作会被自动解绑并以红色 toast 提示；启动时也会扫描 `fcemu.ini` 中的冲突并在 stdout 输出告警；菜单里还有 "Scan for key conflicts" 一键复查。
 
 > 渲染零依赖：内置一份公有领域 8×8 位图字体（font8x8_basic by Daniel Hepper），叠加在 PPU 输出帧缓冲上，再走原有的视觉增强管线。
 
