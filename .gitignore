@@ -1,0 +1,35 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+fcemu
+fcemu.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dependencies
+third_party/
+
+# Test output
+tests/**/*.log
+tests/**/*.tmp
+
+# Presets cache
+presets/**/.cache/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+
+# Claude Code
+.claude/plans/
