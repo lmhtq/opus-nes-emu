@@ -74,9 +74,11 @@ ctest          # 运行单元 + e2e 测试
 | Right Shift | Select |
 | **A / S** | **A 连发 / B 连发**（按住即自动连射 30Hz） |
 | F1 / F2 | 存档 / 读档（写入 `<rom>.state`，载入需 mapper 一致） |
-| F3 | 切换调试覆盖层（每秒打印 FPS / 当前场景 / 主色） |
+| F3 | 切换调试日志（每秒 stdout 打印 FPS / 当前场景 / 主色） |
+| F4 | **打开主菜单**（亦可按 ESC） |
 | F5 | Reset |
-| ESC | 退出 |
+| Tab | 切换屏幕 HUD（FPS / 场景 / 宽屏 / RGB 主色 / 暂停指示） |
+| ESC | 打开/关闭主菜单（菜单关闭时按下亦可，无菜单时再按一次退出） |
 
 ### Player 2 默认键位
 | 键 | 功能 |
@@ -101,7 +103,7 @@ ctest          # 运行单元 + e2e 测试
 | Guide / PS | Reset |
 
 ### 自定义键位 (`fcemu.ini`)
-启动时读取，退出时保存。键名使用 SDL 标准（如 `Z`, `Up`, `Return`, `Right Shift`），动作前缀 `p1.` / `p2.`：
+启动时读取，退出时保存。**推荐方式：在游戏中按 ESC 打开菜单 → Controls → Player 1/2 keys → 选择动作 → 按下任意键即完成绑定（无需重启、自动写回 ini）。** 如需手工编辑，键名使用 SDL 标准（如 `Z`, `Up`, `Return`, `Right Shift`），动作前缀 `p1.` / `p2.`：
 
 ```ini
 key.p1.a=Z
@@ -118,6 +120,39 @@ video.crt=true
 # 格式: gift <kind> [count] | cheer | shake [intensity] [ms] | chat <text> | vote <up|down>
 social.watch_file=/tmp/fcemu_events.txt
 ```
+
+## 现代化交互（GUI 菜单 / HUD / Toast）
+
+不再需要手动编辑 `fcemu.ini`。运行游戏后：
+
+- **ESC / F4** 打开主菜单（游戏自动暂停）。菜单导航：↑↓ 选择，← → 调整选项，Enter 确认/进入子菜单，Backspace/ESC 返回。
+- **主菜单结构**：
+  - Resume — 关闭菜单回到游戏
+  - Save state / Load state / Reset — 同 F1/F2/F5
+  - **Settings**
+    - Video：CRT 滤镜开关、Widescreen 开关
+    - Audio：场景固定（auto/action/boss/menu/calm）
+    - Haptics：测试震动
+    - HUD overlay 开关
+  - **Controls** → Player 1 / Player 2 keys：列出全部 20 个动作（含连发），选中后按任意键即完成绑定，按 ESC 取消
+  - Quit
+- **Tab** 随时切换屏幕 HUD（FPS / 当前音频场景 / 宽屏状态 / RGB 主色 / 是否暂停）。
+- **Toast 通知**：存档成功、场景切换、社交事件（cheer / gift / chat）、键位绑定完成等都会在右下角弹出 1.5–2 秒。
+- 所有菜单内修改即时落盘到 `fcemu.ini`，下次启动自动恢复。
+
+> 渲染零依赖：内置一份公有领域 8×8 位图字体（font8x8_basic by Daniel Hepper），叠加在 PPU 输出帧缓冲上，再走原有的视觉增强管线。
+
+
+
+| 功能 | 说明 |
+|------|------|
+| 存档/读档 (REQ-007) | F1 写入 `<rom>.state`（含 CPU/PPU/APU/RAM/Mapper bank/PRG-RAM/CHR-RAM）；F2 读回 |
+| 宽屏 (REQ-103) | 设 `video.widescreen=true` 后输出 320x240，两侧由边缘列复制并做亮度渐变 |
+| 动态音效场景 (REQ-107) | `AudioEnhancer` 每 30 帧根据 RMS 自动切换 `action`/`boss`/`menu`/`calm`，调整 EQ + 立体声宽度 + 混响 |
+| 音频 remix (REQ-109) | `AudioEnhancer::load_remix_track(name, raw_s16le_path)` + `trigger_remix_oneshot()` 把外部 PCM 一次性混入输出 |
+| RGB 灯光 (REQ-112) | `HapticsManager` 每帧从画面提取主色（16x16 网格 + 饱和度加权），通过 `set_rgb_callback()` 输出给硬件 |
+| 直播互动 (REQ-113) | `SocialBridge` 监听 ini 配置的文本文件，行内事件触发震动 / 屏幕闪 / 屏幕震 / 礼物连发 |
+| 调试覆盖层 (REQ-010) | F3 切换；每秒打印 FPS、当前场景、宽屏状态、主色 |
 
 ## 高级功能
 

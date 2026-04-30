@@ -210,16 +210,49 @@ void UI::process_events() {
             case SDL_QUIT: quit_ = true; break;
             case SDL_KEYDOWN: {
                 SDL_Keycode k = ev.key.keysym.sym;
-                if (k == SDLK_ESCAPE) { quit_ = true; break; }
-                if (k == SDLK_F1)     { snap_.save_state = true; break; }
-                if (k == SDLK_F2)     { snap_.load_state = true; break; }
-                if (k == SDLK_F3)     { debug_overlay_ = !debug_overlay_; break; }
-                if (k == SDLK_F5)     { snap_.reset = true; break; }
+
+                // Menu keybind capture takes priority — bind the next key.
+                if (menu_ctrl_.is_capturing_key()) {
+                    if (k == SDLK_ESCAPE) { menu_ctrl_.on_key(MenuKey::Back); break; }
+                    const char* name = SDL_GetKeyName(k);
+                    if (name && *name) menu_ctrl_.capture_key_name(name);
+                    break;
+                }
+
+                // While the menu is open it owns navigation keys.
+                if (menu_ctrl_.is_open()) {
+                    switch (k) {
+                        case SDLK_ESCAPE: menu_ctrl_.on_key(MenuKey::Back); break;
+                        case SDLK_UP:     menu_ctrl_.on_key(MenuKey::Up); break;
+                        case SDLK_DOWN:   menu_ctrl_.on_key(MenuKey::Down); break;
+                        case SDLK_LEFT:   menu_ctrl_.on_key(MenuKey::Left); break;
+                        case SDLK_RIGHT:  menu_ctrl_.on_key(MenuKey::Right); break;
+                        case SDLK_RETURN:
+                        case SDLK_SPACE:  menu_ctrl_.on_key(MenuKey::Activate); break;
+                        case SDLK_BACKSPACE: menu_ctrl_.on_key(MenuKey::Back); break;
+                    }
+                    break;
+                }
+
+                // Global hotkeys (game-mode).
+                if (k == SDLK_ESCAPE) {
+                    if (root_menu_) menu_ctrl_.open(root_menu_);
+                    else quit_ = true;
+                    break;
+                }
+                if (k == SDLK_F1)  { snap_.save_state = true; break; }
+                if (k == SDLK_F2)  { snap_.load_state = true; break; }
+                if (k == SDLK_F3)  { debug_overlay_ = !debug_overlay_; break; }
+                if (k == SDLK_F4)  { if (root_menu_) menu_ctrl_.open(root_menu_); break; }
+                if (k == SDLK_F5)  { snap_.reset = true; break; }
+                if (k == SDLK_TAB) { hud_visible_ = !hud_visible_; break; }
+
                 auto it = km.find(k);
                 if (it != km.end()) it->second(snap_, true);
                 break;
             }
             case SDL_KEYUP: {
+                if (menu_ctrl_.is_open()) break; // ignore game keys while paused
                 auto it = km.find(ev.key.keysym.sym);
                 if (it != km.end()) it->second(snap_, false);
                 break;
@@ -283,7 +316,41 @@ void UI::render_frame(const uint8_t* px, int w, int h) {
         SDL_RenderSetLogicalSize((SDL_Renderer*)renderer_, w, h);
     }
     if (!texture_) return;
-    SDL_UpdateTexture((SDL_Texture*)texture_, nullptr, px, w * 4);
+
+    // Composite overlay (toasts, menu, HUD) on top of the game frame.
+    overlay_buf_.assign(px, px + (size_t)w * h * 4);
+    uint8_t* buf = overlay_buf_.data();
+
+    // Frame timing for HUD.
+    Uint64 now = SDL_GetPerformanceCounter();
+    if (last_render_ticks_) {
+        double dt = (double)(now - last_render_ticks_) / SDL_GetPerformanceFrequency();
+        if (dt > 0.0001) {
+            float inst = (float)(1.0 / dt);
+            fps_ = fps_ * 0.9f + inst * 0.1f;
+        }
+        overlay_.update((float)dt);
+    }
+    last_render_ticks_ = now;
+
+    if (hud_visible_) {
+        char fps_buf[32];
+        std::snprintf(fps_buf, sizeof(fps_buf), "FPS %4.1f", fps_);
+        Overlay::fill_rect(buf, w, h, 4, 4, 64, 12, RGBA{0,0,0,160});
+        Overlay::draw_text(buf, w, h, 6, 6, fps_buf, Overlay::Green);
+        int hy = 20;
+        for (auto& line : hud_lines_) {
+            int tw = Overlay::text_width(line);
+            Overlay::fill_rect(buf, w, h, 4, hy, tw + 6, 10, RGBA{0,0,0,140});
+            Overlay::draw_text(buf, w, h, 6, hy + 1, line, Overlay::Cyan);
+            hy += 11;
+        }
+    }
+
+    overlay_.render_toasts(buf, w, h);
+    if (menu_ctrl_.is_open()) menu_ctrl_.render(buf, w, h, overlay_);
+
+    SDL_UpdateTexture((SDL_Texture*)texture_, nullptr, buf, w * 4);
     SDL_RenderClear((SDL_Renderer*)renderer_);
     SDL_RenderCopy((SDL_Renderer*)renderer_, (SDL_Texture*)texture_, nullptr, nullptr);
     SDL_RenderPresent((SDL_Renderer*)renderer_);
@@ -332,6 +399,42 @@ bool UI::load_settings(const std::string& path) {
         settings_[line.substr(0, eq)] = line.substr(eq + 1);
     }
     return true;
+}
+
+// ---- Default-binding seeding & action enumeration -------------------------
+namespace {
+struct DefBind { const char* action; SDL_Keycode key; };
+static const DefBind kDefBinds[] = {
+    {"p1.a", SDLK_z}, {"p1.b", SDLK_x},
+    {"p1.select", SDLK_RSHIFT}, {"p1.start", SDLK_RETURN},
+    {"p1.up", SDLK_UP}, {"p1.down", SDLK_DOWN},
+    {"p1.left", SDLK_LEFT}, {"p1.right", SDLK_RIGHT},
+    {"p1.a_turbo", SDLK_a}, {"p1.b_turbo", SDLK_s},
+    {"p2.up", SDLK_i}, {"p2.down", SDLK_k},
+    {"p2.left", SDLK_j}, {"p2.right", SDLK_l},
+    {"p2.a", SDLK_g}, {"p2.b", SDLK_h},
+    {"p2.select", SDLK_v}, {"p2.start", SDLK_b},
+    {"p2.a_turbo", SDLK_t}, {"p2.b_turbo", SDLK_y},
+};
+} // namespace
+
+void UI::seed_default_bindings() {
+    for (auto& d : kDefBinds) {
+        std::string skey = std::string("key.") + d.action;
+        if (settings_.find(skey) == settings_.end()) {
+            const char* name = SDL_GetKeyName(d.key);
+            if (name && *name) settings_[skey] = name;
+        }
+    }
+}
+
+const std::vector<std::string>& UI::action_ids() {
+    static std::vector<std::string> v = []{
+        std::vector<std::string> r;
+        for (auto& d : kDefBinds) r.push_back(d.action);
+        return r;
+    }();
+    return v;
 }
 
 } // namespace fcemu

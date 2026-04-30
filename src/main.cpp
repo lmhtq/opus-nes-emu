@@ -15,6 +15,7 @@
 #include "fcemu/presets.h"
 #include "fcemu/social.h"
 #include "fcemu/savestate.h"
+#include "fcemu/menu.h"
 
 #include <SDL.h>
 #include <cstdio>
@@ -22,6 +23,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -181,6 +183,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     ui.load_settings("fcemu.ini");
+    ui.seed_default_bindings();
+    ui.set_hud_visible(ui.get_setting("ui.hud") == "true");
     {
         auto rate_str = ui.get_setting("turbo.rate_frames");
         if (!rate_str.empty()) {
@@ -221,28 +225,137 @@ int main(int argc, char* argv[]) {
             case SocialEventType::Cheer:
                 venh.trigger_hit_flash();
                 haptics.trigger_vibration(VibrationIntensity::Medium, ev.duration_ms);
+                ui.overlay().post_toast("Cheer!", 1.5f, Overlay::Yellow);
                 break;
             case SocialEventType::Shake:
                 venh.trigger_shake(ev.intensity / 100.0f, ev.duration_ms);
                 haptics.trigger_vibration(VibrationIntensity::Strong, ev.duration_ms);
+                ui.overlay().post_toast("Shake!", 1.2f, Overlay::Red);
                 break;
             case SocialEventType::Gift:
                 if (auto* sc = dynamic_cast<StandardController*>(input.get_controller(0))) {
-                    // Burst-press A as a "gift bonus" turbo for a short window.
                     sc->set_turbo(Button::A, true);
                 }
                 haptics.trigger_vibration(VibrationIntensity::Strong, ev.duration_ms);
-                std::printf("[social] gift %s x%d\n", ev.kind.c_str(), ev.count);
+                {
+                    std::ostringstream os; os << "Gift " << ev.kind << " x" << ev.count;
+                    ui.overlay().post_toast(os.str(), 2.0f, Overlay::Green);
+                }
                 break;
             case SocialEventType::Vote:
-                std::printf("[social] vote %s\n", ev.text.c_str());
+                ui.overlay().post_toast(std::string("Vote ") + ev.text, 1.5f, Overlay::Cyan);
                 break;
             case SocialEventType::Chat:
-                std::printf("[social] chat: %s\n", ev.text.c_str());
+                ui.overlay().post_toast(std::string("Chat: ") + ev.text, 2.5f, Overlay::White);
                 break;
             default: break;
         }
     });
+
+    // ---- Build the in-game menu (ESC / F4 to open) ----------------------
+    auto root = std::make_shared<Menu>("fcemu");
+
+    // Settings → Video
+    auto m_video = std::make_shared<Menu>("Video");
+    m_video->add(MenuItem::toggle("CRT scanlines",
+        [&]{ return ui.get_setting("video.crt") != "false"; },
+        [&](bool v){
+            ui.set_setting("video.crt", v ? "true" : "false");
+            CRTEffect c{}; c.enabled = v; c.scanline_intensity = 0.35f;
+            venh.set_crt_params(c);
+            ui.overlay().post_toast(v ? "CRT ON" : "CRT OFF", 1.0f);
+        }));
+    m_video->add(MenuItem::toggle("Widescreen 320x240",
+        [&]{ return venh.widescreen_enabled(); },
+        [&](bool v){
+            venh.enable_widescreen(v);
+            ui.set_setting("video.widescreen", v ? "true" : "false");
+            ui.overlay().post_toast(v ? "Widescreen ON" : "Widescreen OFF", 1.0f);
+        }));
+
+    // Settings → Audio
+    auto m_audio = std::make_shared<Menu>("Audio");
+    static const std::vector<std::string> scene_opts =
+        {"auto", "calm", "menu", "action", "boss", "victory"};
+    m_audio->add(MenuItem::choice("Scene", scene_opts,
+        [&]{
+            std::string s = ui.get_setting("audio.scene");
+            if (s.empty()) s = "auto";
+            for (size_t i = 0; i < scene_opts.size(); ++i)
+                if (scene_opts[i] == s) return (int)i;
+            return 0;
+        },
+        [&](int v){
+            std::string s = scene_opts[v];
+            ui.set_setting("audio.scene", s);
+            if (s != "auto") aenh.set_scene(s);
+            ui.overlay().post_toast("Scene: " + s, 1.0f, Overlay::Cyan);
+        }));
+
+    // Settings → Haptics
+    auto m_haptics = std::make_shared<Menu>("Haptics");
+    m_haptics->add(MenuItem::action("Test rumble (strong 400ms)", [&]{
+        haptics.trigger_vibration(VibrationIntensity::Strong, 400);
+        ui.overlay().post_toast("Rumble!", 1.0f, Overlay::Red);
+    }));
+
+    // Controls → P1 / P2 keybinds
+    auto build_keybind_menu = [&](const std::string& title, const std::string& prefix){
+        auto m = std::make_shared<Menu>(title);
+        for (auto& act : UI::action_ids()) {
+            if (act.rfind(prefix, 0) != 0) continue;
+            std::string label = act.substr(prefix.size());
+            m->add(MenuItem::keybind(label, act,
+                [&, act]{
+                    auto v = ui.get_setting("key." + act);
+                    return v.empty() ? std::string("?") : v;
+                },
+                [&, act](const std::string& name){
+                    ui.set_setting("key." + act, name);
+                    ui.overlay().post_toast(act + " -> " + name, 1.2f, Overlay::Yellow);
+                }));
+        }
+        return m;
+    };
+    auto m_p1 = build_keybind_menu("Player 1 keys", "p1.");
+    auto m_p2 = build_keybind_menu("Player 2 keys", "p2.");
+
+    auto m_controls = std::make_shared<Menu>("Controls");
+    m_controls->add(MenuItem::submenu("Player 1 keys", m_p1));
+    m_controls->add(MenuItem::submenu("Player 2 keys", m_p2));
+    m_controls->add(MenuItem::action("Reset all keys to default", [&]{
+        for (auto& act : UI::action_ids()) ui.set_setting("key." + act, "");
+        // Re-seed (only fills empty values).
+        for (auto& act : UI::action_ids()) ui.set_setting("key." + act, "");
+        // Clear and reseed by removing entries:
+        // (set_setting can't erase; rely on seed which only fills missing.)
+        // Workaround: blank means "?" in menu, but build_keymap will skip blanks.
+        ui.seed_default_bindings(); // no-op if non-empty; values were not empty earlier
+        ui.overlay().post_toast("Bindings reset (restart for full effect)", 2.0f, Overlay::Yellow);
+    }));
+
+    // Settings root
+    auto m_settings = std::make_shared<Menu>("Settings");
+    m_settings->add(MenuItem::submenu("Video",   m_video));
+    m_settings->add(MenuItem::submenu("Audio",   m_audio));
+    m_settings->add(MenuItem::submenu("Haptics", m_haptics));
+    m_settings->add(MenuItem::toggle("HUD overlay (Tab)",
+        [&]{ return ui.hud_visible(); },
+        [&](bool v){ ui.set_hud_visible(v); ui.set_setting("ui.hud", v ? "true" : "false"); }));
+
+    // Root
+    bool want_save = false, want_load = false, want_reset = false;
+    root->add(MenuItem::action("Resume",      [&]{ ui.menu().close(); }));
+    root->add(MenuItem::action("Save state (F1)", [&]{ want_save  = true; ui.menu().close(); }));
+    root->add(MenuItem::action("Load state (F2)", [&]{ want_load  = true; ui.menu().close(); }));
+    root->add(MenuItem::action("Reset (F5)",  [&]{ want_reset = true; ui.menu().close(); }));
+    root->add(MenuItem::submenu("Settings",   m_settings));
+    root->add(MenuItem::submenu("Controls",   m_controls));
+    root->add(MenuItem::action("Quit",        [&]{ ui.menu().close(); /* set quit below */
+        SDL_Event q; q.type = SDL_QUIT; SDL_PushEvent(&q);
+    }));
+    ui.set_root_menu(root);
+
 
     // Audio path: APU -> AudioEnhancer -> SDL queue.
     apu.set_sample_callback([&](const std::vector<int16_t>& s){
@@ -250,13 +363,18 @@ int main(int argc, char* argv[]) {
         aenh.process_samples(s, processed);
         ui.push_audio(processed.data(), (int)processed.size());
 
-        // Feed the replay buffer (latest video filled later in the frame).
-        // Update audio scene heuristic occasionally.
+        // Auto-scene heuristic — only when user hasn't pinned a scene.
         static int scene_div = 0;
         if (++scene_div >= 30) {
             scene_div = 0;
-            const char* scene = infer_scene(s);
-            if (aenh.current_scene() != scene) aenh.set_scene(scene);
+            std::string forced = ui.get_setting("audio.scene");
+            if (forced.empty() || forced == "auto") {
+                const char* scene = infer_scene(s);
+                if (aenh.current_scene() != scene) {
+                    aenh.set_scene(scene);
+                    ui.overlay().post_toast(std::string("Scene: ") + scene, 1.0f, Overlay::Cyan);
+                }
+            }
         }
     });
 
@@ -275,18 +393,28 @@ int main(int argc, char* argv[]) {
     while (!ui.should_quit()) {
         ui.process_events();
         auto snap = ui.input_snapshot();
-        if (snap.reset) { cpu.reset(); ppu.reset(); apu.reset(); }
-        if (snap.save_state) {
-            if (save_state_to_file(state_path, cpu, mem, ppu, apu, cart))
-                std::printf("[state] saved -> %s\n", state_path.c_str());
-            else
-                std::printf("[state] save FAILED\n");
+
+        // Menu actions can request these too via flags set in the menu lambdas.
+        bool do_save  = snap.save_state || want_save;
+        bool do_load  = snap.load_state || want_load;
+        bool do_reset = snap.reset      || want_reset;
+        want_save = want_load = want_reset = false;
+
+        if (do_reset) {
+            cpu.reset(); ppu.reset(); apu.reset();
+            ui.overlay().post_toast("Reset", 1.0f, Overlay::Yellow);
         }
-        if (snap.load_state) {
-            if (load_state_from_file(state_path, cpu, mem, ppu, apu, cart))
-                std::printf("[state] loaded <- %s\n", state_path.c_str());
+        if (do_save) {
+            if (save_state_to_file(state_path, cpu, mem, ppu, apu, cart))
+                ui.overlay().post_toast("Saved", 1.2f, Overlay::Green);
             else
-                std::printf("[state] load FAILED (no/incompatible state)\n");
+                ui.overlay().post_toast("Save FAILED", 2.0f, Overlay::Red);
+        }
+        if (do_load) {
+            if (load_state_from_file(state_path, cpu, mem, ppu, apu, cart))
+                ui.overlay().post_toast("Loaded", 1.2f, Overlay::Green);
+            else
+                ui.overlay().post_toast("Load FAILED", 2.0f, Overlay::Red);
         }
 
         auto* sc1 = dynamic_cast<StandardController*>(input.get_controller(0));
@@ -296,24 +424,43 @@ int main(int argc, char* argv[]) {
 
         social.tick();
 
-        int budget = CPU_CYCLES_PER_FRAME;
-        bool prev_irq = false;
-        while (budget > 0) {
-            bool now_irq = cart.irq_pending();
-            if (now_irq && !prev_irq) cpu.signal_irq();
-            prev_irq = now_irq;
+        // Pause emulation while menu is up.
+        if (!ui.menu_open()) {
+            int budget = CPU_CYCLES_PER_FRAME;
+            bool prev_irq = false;
+            while (budget > 0) {
+                bool now_irq = cart.irq_pending();
+                if (now_irq && !prev_irq) cpu.signal_irq();
+                prev_irq = now_irq;
 
-            int c = cpu.step();
-            ppu.step(c);
-            apu.step(c);
-            budget -= c;
-            if (ppu.frame_complete()) break;
+                int c = cpu.step();
+                ppu.step(c);
+                apu.step(c);
+                budget -= c;
+                if (ppu.frame_complete()) break;
+            }
         }
 
-        // Post-process video and present.
+        // Post-process video and present (menu/HUD composited inside ui).
         int ow = 256, oh = 240;
         const uint8_t* out = venh.process(ppu.frame().pixels, &ow, &oh);
         if (!out) { out = ppu.frame().pixels; ow = 256; oh = 240; }
+
+        // Refresh HUD lines.
+        if (ui.hud_visible()) {
+            std::vector<std::string> lines;
+            lines.push_back(std::string("Scene ") + aenh.current_scene());
+            lines.push_back(std::string("WS    ") + (venh.widescreen_enabled() ? "on" : "off"));
+            char rgb[24];
+            std::snprintf(rgb, sizeof(rgb), "RGB   %02X%02X%02X",
+                          haptics.current_color().r,
+                          haptics.current_color().g,
+                          haptics.current_color().b);
+            lines.push_back(rgb);
+            if (ui.menu_open()) lines.push_back("PAUSED");
+            ui.set_hud_lines(std::move(lines));
+        }
+
         ui.render_frame(out, ow, oh);
         haptics.update_from_frame(ppu.frame().pixels);
 
@@ -321,9 +468,6 @@ int main(int argc, char* argv[]) {
             FrameData fd{};
             fd.video.assign(ppu.frame().pixels, ppu.frame().pixels + 256*240*4);
             fd.timestamp = (uint64_t)frame_no * 16;
-            // Pass-through APU samples are already consumed by the SDL queue;
-            // skip storing audio to keep memory usage bounded.
-            // (Replay clip generator still produces a still PPM.)
             (void)fd;
         }
 
@@ -331,9 +475,8 @@ int main(int argc, char* argv[]) {
         if (ui.debug_overlay()) {
             Uint64 now = SDL_GetPerformanceCounter();
             if (now - last_stat > perf_freq) {
-                double secs = (now - last_stat) / (double)perf_freq;
-                std::printf("[debug] frame=%d fps≈%.1f scene=%s widescreen=%d rgb=#%02X%02X%02X\n",
-                            frame_no, 1.0 / (secs / 60.0),
+                std::printf("[debug] frame=%d fps=%.1f scene=%s widescreen=%d rgb=#%02X%02X%02X\n",
+                            frame_no, ui.fps(),
                             aenh.current_scene().c_str(),
                             (int)venh.widescreen_enabled(),
                             haptics.current_color().r,

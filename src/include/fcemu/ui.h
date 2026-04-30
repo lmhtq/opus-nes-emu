@@ -4,8 +4,13 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <vector>
 #include <map>
 #include <array>
+#include <memory>
+
+#include "fcemu/overlay.h"
+#include "fcemu/menu.h"
 
 namespace fcemu {
 
@@ -56,6 +61,21 @@ public:
     InputSnapshot input_snapshot() const { return snap_; }
 
     bool debug_overlay() const { return debug_overlay_; }
+    void set_hud_visible(bool v) { hud_visible_ = v; }
+    bool hud_visible() const { return hud_visible_; }
+
+    // Menu / overlay accessors — main.cpp populates the root menu and may
+    // post toasts, set HUD lines, etc.
+    Overlay&         overlay() { return overlay_; }
+    MenuController&  menu()    { return menu_ctrl_; }
+    void set_root_menu(std::shared_ptr<Menu> root) { root_menu_ = std::move(root); }
+    bool menu_open() const     { return menu_ctrl_.is_open(); }
+
+    // Optional dynamic HUD lines drawn at top-left when hud_visible_ is true.
+    void set_hud_lines(std::vector<std::string> lines) { hud_lines_ = std::move(lines); }
+
+    // Frame timing accessor used by HUD (updated each render_frame).
+    float fps() const { return fps_; }
 
     // Misc.
     void set_title(const std::string& t);
@@ -67,6 +87,13 @@ public:
     std::string get_setting(const std::string& key) const;
     bool save_settings(const std::string& path);
     bool load_settings(const std::string& path);
+
+    // Fill settings_ with default key bindings for any missing "key.*" entry.
+    // Idempotent — call after load_settings to ensure menu always has values.
+    void seed_default_bindings();
+
+    // List of all rebindable action IDs (e.g. "p1.a") for menu construction.
+    static const std::vector<std::string>& action_ids();
 
     void set_rom_load_callback(RomLoadCallback cb) { rom_cb_ = std::move(cb); }
     void set_state_callback(StateCallback cb) { state_cb_ = std::move(cb); }
@@ -82,6 +109,7 @@ private:
     void* texture_  = nullptr;     // SDL_Texture*
     int   tex_w_ = 256, tex_h_ = 240;
     bool  debug_overlay_ = false;
+    bool  hud_visible_   = false;
     uint32_t audio_device_ = 0;
     void* gamepads_[4] = {nullptr,nullptr,nullptr,nullptr}; // SDL_GameController*
 
@@ -89,6 +117,15 @@ private:
     std::map<std::string, std::string> settings_;
     RomLoadCallback rom_cb_;
     StateCallback   state_cb_;
+
+    // Overlay + menu state.
+    Overlay         overlay_;
+    MenuController  menu_ctrl_;
+    std::shared_ptr<Menu> root_menu_;
+    std::vector<std::string> hud_lines_;
+    uint64_t last_render_ticks_ = 0;
+    float    fps_ = 60.0f;
+    std::vector<uint8_t> overlay_buf_;  // composited working buffer
 };
 
 } // namespace fcemu

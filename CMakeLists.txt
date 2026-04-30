@@ -26,6 +26,8 @@ set(LIB_SOURCES
     src/presets/presets.cpp
     src/savestate/savestate.cpp
     src/social/social_bridge.cpp
+    src/overlay/overlay.cpp
+    src/menu/menu.cpp
 )
 
 # 头文件目录

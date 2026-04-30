@@ -14,6 +14,8 @@ set(UNIT_TESTS
     social/social_test
     audio/scene_test
     video/widescreen_test
+    overlay/overlay_test
+    menu/menu_test
 )
 
 foreach(t ${UNIT_TESTS})

@@ -28,9 +28,10 @@ docs/hardware/* → docs/specs/REQ-*.md
 | REQ-006 | 输入设备 | OVERVIEW-001 | MOD-INPUT | FEAT-006 | `src/input/input.cpp` | `tests/unit/input/` | ✅ 实现 |
 | REQ-007 | 存档/读档 (Save State) | OVERVIEW-001 | MOD-MEMORY/MOD-CARTRIDGE | — | `src/savestate/savestate.cpp` + `src/main.cpp` (F1/F2) | `tests/unit/savestate/` | ✅ 实现 |
 | REQ-008 | Mapper 0–4 | OVERVIEW-001 | MOD-CARTRIDGE | — | `src/cartridge/mappers.cpp` | `tests/unit/cartridge/` | ✅ 实现 |
-| REQ-009 | 配置持久化 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (settings ini) | — | ✅ 实现 |
-| REQ-010 | Debug/性能 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (F3 toggle) + `src/main.cpp` (FPS log) | — | ✅ 实现 |
-| REQ-011 | 输入设备配置（手柄/连发） | OVERVIEW-001 | MOD-INPUT/MOD-UI | — | `src/input/input.cpp` + `src/ui/ui.cpp` | `tests/unit/input/` | ✅ 实现 |
+| REQ-009 | 配置持久化 | OVERVIEW-001 | MOD-UI | — | `src/ui/ui.cpp` (settings ini) + 菜单内即时落盘 | `tests/unit/menu/` | ✅ 实现 |
+| REQ-010 | Debug/性能 | OVERVIEW-001 | MOD-UI/MOD-OVERLAY | — | `src/ui/ui.cpp` (F3/Tab) + `src/overlay/overlay.cpp` (HUD) | `tests/unit/overlay/` | ✅ 实现 |
+| REQ-011 | 输入设备配置（手柄/连发） | OVERVIEW-001 | MOD-INPUT/MOD-UI | — | `src/input/input.cpp` + `src/ui/ui.cpp` + 菜单 Controls 子菜单 | `tests/unit/input/`, `tests/unit/menu/` | ✅ 实现 |
+| REQ-012 | 现代化交互 (GUI 菜单 / Toast / HUD) | OVERVIEW-001 | MOD-OVERLAY/MOD-MENU | — | `src/overlay/overlay.cpp` + `src/menu/menu.cpp` + `src/ui/ui.cpp` + `src/main.cpp` | `tests/unit/overlay/`, `tests/unit/menu/` | ✅ 实现 |
 
 ## 增强需求 (REQ-101 ~ REQ-115)
 
@@ -68,6 +69,8 @@ docs/hardware/* → docs/specs/REQ-*.md
 | `tests/unit/social/social_test.cpp`     | Unit | REQ-113                 | ✅ 通过 |
 | `tests/unit/audio/scene_test.cpp`       | Unit | REQ-107, REQ-109        | ✅ 通过 |
 | `tests/unit/video/widescreen_test.cpp`  | Unit | REQ-103                 | ✅ 通过 |
+| `tests/unit/overlay/overlay_test.cpp`   | Unit | REQ-010, REQ-012        | ✅ 通过 |
+| `tests/unit/menu/menu_test.cpp`         | Unit | REQ-009, REQ-011, REQ-012 | ✅ 通过 |
 | `tests/e2e/boot_test.cpp`               | E2E  | CPU+PPU+APU+Memory+Cart 集成 | ✅ 通过 |
 
 ## 硬件文档引用 (Hardware Docs)
