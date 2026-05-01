@@ -107,6 +107,7 @@ fcemu_ai_upscale_demo <rom> [options]
 | ncnn-inprocess  | animevideov3 | 2 | ~120-280 ms | ~6-8 fps  | 20-40 | 输出 512×480 |
 | **coreml (ANE)** | animevideov3 | 4 | **~60 ms (含 CHW conv)** / 9.5 ms 纯推理 | **~17 fps** | **60+** | Apple Neural Engine（标量 conv 版本） |
 | **coreml + vImage** | animevideov3 | 4 | **~43 ms** | **~23 fps** | **60+** | RGBA↔CHW 走 Accelerate vImage SIMD |
+| **coreml + vImage + NEON F16→RGBA + 输出回收 🟢** | animevideov3 | 4 | **~13 ms** | **~60 fps（达成 1:1）** | **60+** | F16→RGBA 单遍 NEON kernel（去掉 F32 中转）+ 缓存 MLMultiArray + outputBackings + 输出 buffer 池（消除每帧 4.9MB 页表 fault） |
 
 CoreML 路径（`src/video/ai_upscaler_coreml.mm`）：
 - PyTorch → coremltools → `.mlpackage` → `xcrun coremlcompiler compile` → `.mlmodelc`，输入张量 baked 为 `(1,3,240,320)`（fcemu VideoEnhancer 输出尺寸）。
@@ -158,3 +159,7 @@ PoC 工具验证完算法可用性后，将其接入主程序 `src/main.cpp` 的
 - 2026-05-01: ncnn-vulkan in-process 后端（`src/video/ai_upscaler_ncnn.cpp`）；M2 + MoltenVK，吞吐相比子进程提升 ~2×（285 vs 510 ms/帧）。
 - 2026-05-01: CoreML/ANE 后端（`src/video/ai_upscaler_coreml.mm` + `models/realesr-animevideov3-x4.mlmodelc`）；M2 ANE 单帧 ~60 ms（端到端含 CHW 转换）/ 9.5 ms（纯推理），主循环稳定 60+ fps。
 - 2026-05-01: CoreML 路径 RGBA↔CHW 用 Accelerate vImage 向量化；端到端 60→43 ms（−28%），worker 17→23 fps。模型同时支持 256×240 和 320×240 输入（EnumeratedShapes）。
+- 2026-05-01: CoreML 路径再优化至 **13 ms / 60 fps**（与主循环 1:1 同步）。三处关键改动：
+  1. 缓存 `MLMultiArray` / `MLDictionaryFeatureProvider` / `MLPredictionOptions`，并用 `outputBackings` 把模型直接写进我们持有的 buffer，省一次内部 alloc + memcpy；
+  2. F16 输出走单遍 NEON kernel（`vmulq_f16`/`vcvtq_u16_f16`/`vst4_u8`）直出 RGBA8，跳过 F16→F32→U8→interleave 的多 pass；
+  3. 在 `IAiUpscaler` 加 `recycle_output_buffer()`，worker 每帧把消费完的 RGBA buffer 还回 upscaler 的 pool，**消除 4.9 MB 缓冲每帧首次写入的 ~27 ms 页表 fault**（先前最大瓶颈）。同时 `Frame::rgba` 改为带 `NoInitAllocator` 的 `ByteVec`，跳过 `std::vector::resize` 的零填充。

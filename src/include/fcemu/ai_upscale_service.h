@@ -73,7 +73,7 @@ private:
     // input slot
     std::mutex in_mu_;
     std::condition_variable in_cv_;
-    std::vector<uint8_t> in_buf_;
+    ByteVec in_buf_;
     int in_w_ = 0, in_h_ = 0;
     bool in_pending_ = false;
 

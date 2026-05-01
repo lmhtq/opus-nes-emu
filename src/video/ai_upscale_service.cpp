@@ -74,7 +74,7 @@ void AsyncUpscaleService::worker_loop() {
     using clock = std::chrono::steady_clock;
     while (running_.load()) {
         // 等待 pending 输入
-        std::vector<uint8_t> local;
+        ByteVec local;
         int w = 0, h = 0;
         {
             std::unique_lock<std::mutex> lk(in_mu_);
@@ -133,6 +133,9 @@ void AsyncUpscaleService::worker_loop() {
         std::memcpy(out_buf_.data(), o.rgba.data(), need);
         ++out_gen_;
         out_valid_ = true;
+        // Hand the just-consumed buffer back to the upscaler so it can reuse
+        // those already-faulted pages on the next frame.
+        upscaler_->recycle_output_buffer(std::move(o.rgba));
     }
 }
 

@@ -36,7 +36,7 @@ namespace fcemu {
 
 namespace {
 
-bool ensure_alpha_opaque(std::vector<uint8_t>& rgba) {
+bool ensure_alpha_opaque(ByteVec& rgba) {
     if (rgba.size() % 4 != 0) return false;
     for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 0xff;
     return true;

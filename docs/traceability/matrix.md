@@ -52,7 +52,7 @@ docs/hardware/* → docs/specs/REQ-*.md
 | REQ-113 | 直播互动 | MOD-SOCIAL | `src/social/social_bridge.cpp` (内置事件队列 + 文件监听) | ✅ 实现 |
 | REQ-114 | 即时精彩回放 | MOD-REPLAY | `src/replay/replay.cpp` | ✅ 环形缓冲 + PPM 导出 |
 | REQ-115 | 资源分析器 | MOD-RESOURCE | `src/resource/resource_analyzer.cpp` | ✅ tile/palette dump |
-| REQ-116 | AI 实时超分（Mac PoC + 实时管线 + in-process + CoreML/ANE） | MOD-VIDEO-AIUPSCALE | `src/video/ai_upscaler.cpp` + `src/video/ai_upscaler_ncnn.cpp` + `src/video/ai_upscaler_coreml.mm` + `src/video/ai_upscale_service.cpp` + `tools/ai_upscale_demo.cpp` + `src/main.cpp --ai-upscale` | ✅ 子进程 + ncnn-vulkan inprocess + CoreML ANE（60+ fps） |
+| REQ-116 | AI 实时超分（Mac PoC + 实时管线 + in-process + CoreML/ANE 60fps） | MOD-VIDEO-AIUPSCALE | `src/video/ai_upscaler.cpp` + `src/video/ai_upscaler_ncnn.cpp` + `src/video/ai_upscaler_coreml.mm` + `src/video/ai_upscale_service.cpp` + `tools/ai_upscale_demo.cpp` + `src/main.cpp --ai-upscale` | ✅ 子进程 + ncnn-vulkan inprocess + **CoreML ANE 13 ms / 60 fps（worker 与主循环 1:1 同步）** |
 
 ## 测试矩阵 (Tests)
 

@@ -14,11 +14,27 @@
 
 namespace fcemu {
 
+// std::allocator-compatible adapter that disables value-initialization in
+// container::resize(). For uint8_t buffers that are immediately overwritten
+// (e.g. AI upscaled output) this avoids a multi-MB memset on every frame.
+template <typename T>
+struct NoInitAllocator : std::allocator<T> {
+    using std::allocator<T>::allocator;
+    template <typename U> struct rebind { using other = NoInitAllocator<U>; };
+    template <typename U> void construct(U*) noexcept {}
+    template <typename U, typename A0, typename... Args>
+    void construct(U* p, A0&& a0, Args&&... args) {
+        ::new ((void*)p) U(std::forward<A0>(a0), std::forward<Args>(args)...);
+    }
+};
+
+using ByteVec = std::vector<uint8_t, NoInitAllocator<uint8_t>>;
+
 struct Frame {
     int id = 0;            // 调用方递增；批量必须保持顺序对应
     int width = 0;
     int height = 0;
-    std::vector<uint8_t> rgba; // 紧凑 RGBA8，size == width*height*4
+    ByteVec rgba;          // 紧凑 RGBA8，size == width*height*4
 };
 
 struct UpscalerCaps {
@@ -49,6 +65,10 @@ public:
     virtual bool upscale_batch(const std::vector<Frame>& in,
                                std::vector<Frame>& out,
                                std::string* err = nullptr) = 0;
+    // Optional: hand back a previously-produced rgba buffer for reuse.
+    // Backends that pool output memory can take ownership; the default
+    // implementation simply lets the buffer be destroyed.
+    virtual void recycle_output_buffer(ByteVec&& /*buf*/) {}
 };
 
 std::unique_ptr<IAiUpscaler> make_nearest_upscaler();
