@@ -58,6 +58,11 @@ set(LIB_SOURCES
 if(ncnn_FOUND)
     list(APPEND LIB_SOURCES src/video/ai_upscaler_ncnn.cpp)
 endif()
+if(APPLE)
+    list(APPEND LIB_SOURCES src/video/ai_upscaler_coreml.mm)
+    set_source_files_properties(src/video/ai_upscaler_coreml.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+endif()
 
 # 头文件目录
 include_directories(src/include)
@@ -71,6 +76,12 @@ target_link_libraries(fcemu_lib PUBLIC ${SDL2_LIBRARIES})
 if(ncnn_FOUND)
     target_link_libraries(fcemu_lib PUBLIC ncnn)
     target_compile_definitions(fcemu_lib PUBLIC FCEMU_HAVE_NCNN=1)
+endif()
+if(APPLE)
+    target_link_libraries(fcemu_lib PUBLIC
+        "-framework CoreML"
+        "-framework Foundation")
+    target_compile_definitions(fcemu_lib PUBLIC FCEMU_HAVE_COREML=1)
 endif()
 
 # 可执行文件

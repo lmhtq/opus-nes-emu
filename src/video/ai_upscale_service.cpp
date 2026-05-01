@@ -98,9 +98,10 @@ void AsyncUpscaleService::worker_loop() {
         std::vector<Frame> ins;
         ins.push_back(std::move(in));
         std::vector<Frame> outs;
+        std::string err;
 
         auto t0 = clock::now();
-        bool ok = upscaler_->upscale_batch(ins, outs);
+        bool ok = upscaler_->upscale_batch(ins, outs, &err);
         auto t1 = clock::now();
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
@@ -112,6 +113,10 @@ void AsyncUpscaleService::worker_loop() {
                 stats_.ema_ms = stats_.ema_ms == 0 ? ms : stats_.ema_ms * 0.8 + ms * 0.2;
             } else {
                 ++stats_.failed;
+                if (stats_.failed <= 3 || stats_.failed % 60 == 0) {
+                    std::fprintf(stderr, "[ai-upscale] worker upscale failed (#%d): %s\n",
+                                 stats_.failed, err.c_str());
+                }
             }
         }
 

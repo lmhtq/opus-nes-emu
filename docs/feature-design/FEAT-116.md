@@ -105,6 +105,13 @@ fcemu_ai_upscale_demo <rom> [options]
 | ncnn-subprocess | animevideov3 | 4 | ~510 ms | ~1.85 fps | 60 | 子进程冷启动是主要开销 |
 | ncnn-inprocess  | animevideov3 | 4 | ~285 ms | ~3.5 fps  | 40-48 | MoltenVK 直链，模型常驻 |
 | ncnn-inprocess  | animevideov3 | 2 | ~120-280 ms | ~6-8 fps  | 20-40 | 输出 512×480 |
+| **coreml (ANE)** | animevideov3 | 4 | **~60 ms (含 CHW conv)** / 9.5 ms 纯推理 | **~17 fps** | **60+** | Apple Neural Engine，目标达成 |
+
+CoreML 路径（`src/video/ai_upscaler_coreml.mm`）：
+- PyTorch → coremltools → `.mlpackage` → `xcrun coremlcompiler compile` → `.mlmodelc`，输入张量 baked 为 `(1,3,240,320)`（fcemu VideoEnhancer 输出尺寸）。
+- `MLComputeUnitsAll`：实测会优先调度到 ANE。
+- 当前瓶颈是 RGBA8 ↔ float32 CHW 的标量转换（输出 1280×960×3 共 ~3.7M 元素）；纯模型推理 9.5 ms / 105 fps。后续可用 vImage/Accelerate 向量化。
+- 模型文件命名约定：`<model>-x<scale>.mlmodelc`，例 `realesr-animevideov3-x4.mlmodelc`。
 
 `dlopen libvulkan.1.dylib` 警告是 ncnn 先试 Vulkan loader 再回落 MoltenVK 的正常路径，不影响功能。
 
@@ -148,3 +155,4 @@ PoC 工具验证完算法可用性后，将其接入主程序 `src/main.cpp` 的
 - 2026-05-01: Initial version
 - 2026-05-01: SDL/Metal 实时集成（AsyncUpscaleService + main loop hookup）
 - 2026-05-01: ncnn-vulkan in-process 后端（`src/video/ai_upscaler_ncnn.cpp`）；M2 + MoltenVK，吞吐相比子进程提升 ~2×（285 vs 510 ms/帧）。
+- 2026-05-01: CoreML/ANE 后端（`src/video/ai_upscaler_coreml.mm` + `models/realesr-animevideov3-x4.mlmodelc`）；M2 ANE 单帧 ~60 ms（端到端含 CHW 转换）/ 9.5 ms（纯推理），主循环稳定 60+ fps。

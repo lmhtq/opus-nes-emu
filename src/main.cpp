@@ -258,8 +258,14 @@ int main(int argc, char* argv[]) {
         cfg.thread_spec = "2:4:2";
         std::unique_ptr<IAiUpscaler> up;
         std::string chosen;
+#if FCEMU_HAVE_COREML
+        if (ai_upscale_backend == "auto" || ai_upscale_backend == "coreml") {
+            up = make_coreml_upscaler();
+            chosen = "coreml";
+        }
+#endif
 #if FCEMU_HAVE_NCNN
-        if (ai_upscale_backend == "auto" || ai_upscale_backend == "ncnn-inprocess") {
+        if (!up && (ai_upscale_backend == "auto" || ai_upscale_backend == "ncnn-inprocess")) {
             up = make_ncnn_inprocess_upscaler();
             chosen = "ncnn-inprocess";
         }

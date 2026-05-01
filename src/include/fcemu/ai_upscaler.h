@@ -54,5 +54,6 @@ public:
 std::unique_ptr<IAiUpscaler> make_nearest_upscaler();
 std::unique_ptr<IAiUpscaler> make_ncnn_subprocess_upscaler();
 std::unique_ptr<IAiUpscaler> make_ncnn_inprocess_upscaler();
+std::unique_ptr<IAiUpscaler> make_coreml_upscaler();
 
 } // namespace fcemu
