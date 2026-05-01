@@ -7,9 +7,9 @@
         "hasShapeFlexibility" : "0",
         "isOptional" : "0",
         "dataType" : "Float32",
-        "formattedType" : "MultiArray (Float32 1 × 3 × 960 × 1280)",
+        "formattedType" : "MultiArray (Float32)",
         "shortDescription" : "",
-        "shape" : "[1, 3, 960, 1280]",
+        "shape" : "[]",
         "name" : "output",
         "type" : "MultiArray"
       }
@@ -46,14 +46,16 @@
     },
     "inputSchema" : [
       {
-        "hasShapeFlexibility" : "0",
-        "isOptional" : "0",
-        "dataType" : "Float32",
-        "formattedType" : "MultiArray (Float32 1 × 3 × 240 × 320)",
         "shortDescription" : "",
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 3 × 240 × 320 | 1 × 3 × 240 × 256",
+        "formattedType" : "MultiArray (Float32 1 × 3 × 240 × 320)",
+        "type" : "MultiArray",
         "shape" : "[1, 3, 240, 320]",
         "name" : "input",
-        "type" : "MultiArray"
+        "enumeratedShapes" : "[[1, 3, 240, 320], [1, 3, 240, 256]]"
       }
     ],
     "userDefinedMetadata" : {
@@ -62,7 +64,7 @@
       "com.github.apple.coremltools.version" : "9.0",
       "com.github.apple.coremltools.source_dialect" : "TorchScript"
     },
-    "generatedClassName" : "animevideov3_x4_320",
+    "generatedClassName" : "animevideov3_x4_multi",
     "method" : "predict"
   }
 ]

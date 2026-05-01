@@ -80,7 +80,8 @@ endif()
 if(APPLE)
     target_link_libraries(fcemu_lib PUBLIC
         "-framework CoreML"
-        "-framework Foundation")
+        "-framework Foundation"
+        "-framework Accelerate")
     target_compile_definitions(fcemu_lib PUBLIC FCEMU_HAVE_COREML=1)
 endif()
 

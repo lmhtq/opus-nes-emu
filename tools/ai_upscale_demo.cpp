@@ -204,6 +204,12 @@ int main(int argc, char** argv) {
     std::unique_ptr<fcemu::IAiUpscaler> up;
     if (a.backend == "nearest") up = fcemu::make_nearest_upscaler();
     else if (a.backend == "ncnn-subprocess") up = fcemu::make_ncnn_subprocess_upscaler();
+#if FCEMU_HAVE_NCNN
+    else if (a.backend == "ncnn-inprocess") up = fcemu::make_ncnn_inprocess_upscaler();
+#endif
+#if FCEMU_HAVE_COREML
+    else if (a.backend == "coreml") up = fcemu::make_coreml_upscaler();
+#endif
     else { std::fprintf(stderr, "unknown backend: %s\n", a.backend.c_str()); return 3; }
 
     fcemu::UpscalerConfig cfg;

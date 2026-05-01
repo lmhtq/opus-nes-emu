@@ -17,9 +17,11 @@
 
 #import <Foundation/Foundation.h>
 #import <CoreML/CoreML.h>
+#import <Accelerate/Accelerate.h>
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <vector>
 
@@ -148,18 +150,28 @@ public:
                 return false;
             }
             float* p = (float*)arr.dataPointer;
-            // RGBA8 -> CHW float32 [0,1]
             const int chan_stride = H * W;
-            const uint8_t* src = in.rgba.data();
-            for (int y = 0; y < H; ++y) {
-                for (int x = 0; x < W; ++x) {
-                    int idx = (y * W + x) * 4;
-                    int dst = y * W + x;
-                    p[0 * chan_stride + dst] = src[idx + 0] / 255.0f;
-                    p[1 * chan_stride + dst] = src[idx + 1] / 255.0f;
-                    p[2 * chan_stride + dst] = src[idx + 2] / 255.0f;
-                }
-            }
+            // Reusable scratch U8 planes for vImage split.
+            in_planeR_.resize((size_t)chan_stride);
+            in_planeG_.resize((size_t)chan_stride);
+            in_planeB_.resize((size_t)chan_stride);
+            in_planeA_.resize((size_t)chan_stride);
+
+            vImage_Buffer src_buf = { (void*)in.rgba.data(),
+                                      (vImagePixelCount)H, (vImagePixelCount)W,
+                                      (size_t)W * 4 };
+            vImage_Buffer dR = { in_planeR_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
+            vImage_Buffer dG = { in_planeG_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
+            vImage_Buffer dB = { in_planeB_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
+            vImage_Buffer dA = { in_planeA_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
+            vImageConvert_RGBA8888toPlanar8(&src_buf, &dR, &dG, &dB, &dA, kvImageNoFlags);
+
+            vImage_Buffer fR = { p + 0 * chan_stride, (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W * 4 };
+            vImage_Buffer fG = { p + 1 * chan_stride, (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W * 4 };
+            vImage_Buffer fB = { p + 2 * chan_stride, (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W * 4 };
+            vImageConvert_Planar8toPlanarF(&dR, &fR, 1.0f, 0.0f, kvImageNoFlags);
+            vImageConvert_Planar8toPlanarF(&dG, &fG, 1.0f, 0.0f, kvImageNoFlags);
+            vImageConvert_Planar8toPlanarF(&dB, &fB, 1.0f, 0.0f, kvImageNoFlags);
 
             NSString* iname = [NSString stringWithUTF8String:input_name_.c_str()];
             NSDictionary<NSString*, MLFeatureValue*>* feats = @{
@@ -185,64 +197,64 @@ public:
                 if (err) *err = "output is not multiarray";
                 return false;
             }
-            // Expect shape (1,3,OH,OW); coerce floats and pack to RGBA8.
-            // Support both Float32 and Float16 outputs.
+            // Expect shape (1,3,OH,OW); pack to RGBA8 via vImage.
+            // Supports both Float32 and Float16 outputs.
             out.id = in.id;
             out.width = OW;
             out.height = OH;
             out.rgba.assign((size_t)OW * OH * 4, 255);
             const int ostride = OH * OW;
 
+            // Reusable U8 output planes
+            out_planeR_.resize((size_t)ostride);
+            out_planeG_.resize((size_t)ostride);
+            out_planeB_.resize((size_t)ostride);
+            if (out_planeA_.size() != (size_t)ostride) {
+                out_planeA_.assign((size_t)ostride, 255);
+            }
+
+            vImage_Buffer dst_buf = { out.rgba.data(),
+                                      (vImagePixelCount)OH, (vImagePixelCount)OW,
+                                      (size_t)OW * 4 };
+            vImage_Buffer pR = { out_planeR_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
+            vImage_Buffer pG = { out_planeG_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
+            vImage_Buffer pB = { out_planeB_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
+            vImage_Buffer pA = { out_planeA_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
+
             if (om.dataType == MLMultiArrayDataTypeFloat32) {
                 const float* op = (const float*)om.dataPointer;
-                for (int y = 0; y < OH; ++y) {
-                    for (int x = 0; x < OW; ++x) {
-                        int sidx = y * OW + x;
-                        int didx = (y * OW + x) * 4;
-                        auto cv = [&](float v) {
-                            v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
-                            return (uint8_t)(v * 255.0f + 0.5f);
-                        };
-                        out.rgba[didx + 0] = cv(op[0 * ostride + sidx]);
-                        out.rgba[didx + 1] = cv(op[1 * ostride + sidx]);
-                        out.rgba[didx + 2] = cv(op[2 * ostride + sidx]);
-                    }
-                }
+                vImage_Buffer fR_o = { (void*)(op + 0 * ostride),
+                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                vImage_Buffer fG_o = { (void*)(op + 1 * ostride),
+                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                vImage_Buffer fB_o = { (void*)(op + 2 * ostride),
+                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                vImageConvert_PlanarFtoPlanar8(&fR_o, &pR, 1.0f, 0.0f, kvImageNoFlags);
+                vImageConvert_PlanarFtoPlanar8(&fG_o, &pG, 1.0f, 0.0f, kvImageNoFlags);
+                vImageConvert_PlanarFtoPlanar8(&fB_o, &pB, 1.0f, 0.0f, kvImageNoFlags);
             } else if (om.dataType == MLMultiArrayDataTypeFloat16) {
+                // Convert F16 -> F32 in scratch, then to U8.
+                f16_scratch_.resize((size_t)ostride);
                 const uint16_t* op = (const uint16_t*)om.dataPointer;
-                auto h2f = [](uint16_t h) {
-                    uint32_t s = (h & 0x8000) << 16;
-                    uint32_t e = (h >> 10) & 0x1F;
-                    uint32_t m = h & 0x3FF;
-                    uint32_t f;
-                    if (e == 0) {
-                        if (m == 0) f = s;
-                        else { while (!(m & 0x400)) { m <<= 1; e -= 1; }
-                            e += 1; m &= 0x3FF; f = s | ((e + 112) << 23) | (m << 13); }
-                    } else if (e == 31) {
-                        f = s | 0x7F800000 | (m << 13);
-                    } else {
-                        f = s | ((e + 112) << 23) | (m << 13);
-                    }
-                    float r; std::memcpy(&r, &f, 4); return r;
+                auto convert_plane = [&](const uint16_t* base, vImage_Buffer& outU8) {
+                    vImage_Buffer fbuf16 = { (void*)base,
+                                             (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 2 };
+                    vImage_Buffer fbuf32 = { f16_scratch_.data(),
+                                             (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                    vImageConvert_Planar16FtoPlanarF(&fbuf16, &fbuf32, kvImageNoFlags);
+                    vImageConvert_PlanarFtoPlanar8(&fbuf32, &outU8, 1.0f, 0.0f, kvImageNoFlags);
                 };
-                for (int y = 0; y < OH; ++y) {
-                    for (int x = 0; x < OW; ++x) {
-                        int sidx = y * OW + x;
-                        int didx = (y * OW + x) * 4;
-                        auto cv = [&](float v) {
-                            v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
-                            return (uint8_t)(v * 255.0f + 0.5f);
-                        };
-                        out.rgba[didx + 0] = cv(h2f(op[0 * ostride + sidx]));
-                        out.rgba[didx + 1] = cv(h2f(op[1 * ostride + sidx]));
-                        out.rgba[didx + 2] = cv(h2f(op[2 * ostride + sidx]));
-                    }
-                }
+                convert_plane(op + 0 * ostride, pR);
+                convert_plane(op + 1 * ostride, pG);
+                convert_plane(op + 2 * ostride, pB);
             } else {
                 if (err) *err = "unsupported output dataType";
                 return false;
             }
+
+            // vImageConvert_Planar8toARGB8888 just interleaves 4 planes byte-by-byte
+            // in the order given. Pass (R,G,B,A) to produce RGBA8 layout.
+            vImageConvert_Planar8toARGB8888(&pR, &pG, &pB, &pA, &dst_buf, kvImageNoFlags);
         }
         return true;
     }
@@ -265,6 +277,10 @@ private:
     void* model_ = nullptr; // CFRetain'd MLModel*
     std::string input_name_;
     std::string output_name_;
+    // vImage scratch buffers (reused frame-to-frame to avoid allocs).
+    std::vector<uint8_t> in_planeR_, in_planeG_, in_planeB_, in_planeA_;
+    std::vector<uint8_t> out_planeR_, out_planeG_, out_planeB_, out_planeA_;
+    std::vector<float>   f16_scratch_;
 };
 
 } // namespace
