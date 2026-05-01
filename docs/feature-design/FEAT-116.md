@@ -98,6 +98,42 @@ fcemu_ai_upscale_demo <rom> [options]
 
 - `docs/hardware/ppu/rendering.md`
 
+## 实时（在线）集成 — 第二阶段 (SDL/Metal Live Path)
+
+PoC 工具验证完算法可用性后，将其接入主程序 `src/main.cpp` 的渲染循环。
+关键点：
+
+1. **AsyncUpscaleService**（`src/include/fcemu/ai_upscale_service.h`）
+   - worker 线程持有 `IAiUpscaler`；主线程 `submit()` 非阻塞，新输入覆盖未消费的旧输入（背压：丢中间帧）
+   - `try_get_latest()` 返回 generation id，用于判定"是否是新输出"
+2. **主循环改造**（`src/main.cpp`）
+   - 命令行 `--ai-upscale[=<model>]` `--ai-scale=N` 启用
+   - 每帧把 VideoEnhancer 输出 submit 给 service
+   - SDL 纹理始终按 `target_w × target_h` 创建（避免每帧重建）：
+     - 有最新 AI 输出 → 拷贝
+     - 无 → 主线程做最近邻放大到 target，保持画面流畅
+3. **SDL/Metal**（`src/ui/ui.cpp`）
+   - macOS 下 `SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal")`
+   - 失败回退到 software，避免 headless / dummy 驱动场景崩溃
+   - 启动时打印实际 renderer 名称
+4. **HUD**：`AIUP <ema>ms drop=N ok=N` 实时反映吞吐
+5. **观测脚本**：每 2 秒 stdout 打印 submitted/dropped/processed/failed/last/ema
+
+**M2 base 实测（SDL_VIDEODRIVER=dummy 烟雾测试 18 秒）**：
+
+| 指标 | 值 |
+|------|----|
+| 模拟器主循环 | 60.5 fps（不被 AI 阻塞）|
+| AI worker 吞吐 | ~1.85 fps（subprocess ~510 ms/帧）|
+| 丢帧率 | ~97% （back-pressure 正确生效）|
+| 失败 | 0 |
+| 主线程渲染源 | 有 AI 输出 → AI 帧；其他 → 最近邻 fallback |
+
+**已知限制**：
+- subprocess 模型每次冷启动 ~500 ms，难以满足 60 fps 实时；下一阶段需切换为 in-process ncnn-vulkan 直链调用
+- HUD/menu/toast 仍按目标分辨率叠加 → 文字小但锐利（可接受）
+
 ## 变更记录 (Change History)
 
 - 2026-05-01: Initial version
+- 2026-05-01: SDL/Metal 实时集成（AsyncUpscaleService + main loop hookup）

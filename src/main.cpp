@@ -9,6 +9,8 @@
 #include "fcemu/input.h"
 #include "fcemu/ui.h"
 #include "fcemu/video_enhancer.h"
+#include "fcemu/ai_upscaler.h"
+#include "fcemu/ai_upscale_service.h"
 #include "fcemu/audio_enhancer.h"
 #include "fcemu/haptics.h"
 #include "fcemu/replay.h"
@@ -128,13 +130,34 @@ int main(int argc, char* argv[]) {
     std::printf("Version 0.1.0\n");
 
     if (argc < 2) {
-        std::printf("Usage: %s <rom_file.nes>\n", argv[0]);
+        std::printf("Usage: %s <rom_file.nes> [--ai-upscale[=<model>]] [--ai-scale=N]\n", argv[0]);
         return 1;
     }
 
+    // ---- CLI flags --------------------------------------------------------
+    std::string rom_path;
+    bool ai_upscale_enabled = false;
+    std::string ai_upscale_model = "realesr-animevideov3";
+    int ai_upscale_scale = 4;
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a.rfind("--ai-upscale", 0) == 0) {
+            ai_upscale_enabled = true;
+            auto eq = a.find('=');
+            if (eq != std::string::npos) ai_upscale_model = a.substr(eq + 1);
+        } else if (a.rfind("--ai-scale=", 0) == 0) {
+            ai_upscale_scale = std::atoi(a.c_str() + 11);
+            if (ai_upscale_scale != 2 && ai_upscale_scale != 3 && ai_upscale_scale != 4)
+                ai_upscale_scale = 4;
+        } else if (a[0] != '-' && rom_path.empty()) {
+            rom_path = a;
+        }
+    }
+    if (rom_path.empty()) rom_path = argv[1];
+
     Cartridge cart;
-    if (!cart.load_rom(argv[1])) {
-        std::fprintf(stderr, "Failed to load ROM: %s\n", argv[1]);
+    if (!cart.load_rom(rom_path.c_str())) {
+        std::fprintf(stderr, "Failed to load ROM: %s\n", rom_path.c_str());
         return 1;
     }
     std::printf("ROM: %s\n  mapper=%d  battery=%d  sha256=%s\n",
@@ -216,6 +239,39 @@ int main(int argc, char* argv[]) {
     }
     AudioEnhancer aenh; aenh.init(44100);
     HapticsManager haptics; haptics.init();
+
+    // ---- AI 实时超分（REQ-116，可选，默认关闭） --------------------------
+    std::unique_ptr<AsyncUpscaleService> aiup;
+    std::vector<uint8_t> render_buf;        // target_w*target_h*4 渲染缓冲
+    std::vector<uint8_t> ai_latest;         // 最近一次成功的 upscale 输出
+    uint64_t ai_last_gen = 0;
+    bool ai_have_latest = false;
+    int ai_target_w = 0, ai_target_h = 0;
+    if (ai_upscale_enabled) {
+        UpscalerConfig cfg{};
+        cfg.model_name = ai_upscale_model;
+        cfg.scale = ai_upscale_scale;
+        cfg.tile_size = "0";
+        cfg.thread_spec = "2:4:2";
+        // binary_path / model_dir 留空，让 NcnnSubprocessUpscaler 走环境变量
+        // FCEMU_AIUP_BIN / FCEMU_AIUP_MODEL_DIR 自动发现。
+        auto up = make_ncnn_subprocess_upscaler();
+        aiup = std::make_unique<AsyncUpscaleService>();
+        if (!aiup->start(std::move(up), cfg)) {
+            std::fprintf(stderr, "[ai-upscale] failed to start service "
+                         "(set FCEMU_AIUP_BIN / FCEMU_AIUP_MODEL_DIR)\n");
+            aiup.reset();
+        } else {
+            ai_target_w = aiup->target_w();
+            ai_target_h = aiup->target_h();
+            render_buf.assign((size_t)ai_target_w * ai_target_h * 4, 0);
+            ai_latest.assign(render_buf.size(), 0);
+            std::printf("[ai-upscale] enabled: model=%s scale=%d target=%dx%d\n",
+                        ai_upscale_model.c_str(), ai_upscale_scale,
+                        ai_target_w, ai_target_h);
+        }
+    }
+
     haptics.set_rgb_callback([](RGBColor c){
         // Hardware integration is platform-specific; print only when
         // something downstream actually consumes this.
@@ -471,6 +527,47 @@ int main(int argc, char* argv[]) {
         const uint8_t* out = venh.process(ppu.frame().pixels, &ow, &oh);
         if (!out) { out = ppu.frame().pixels; ow = 256; oh = 240; }
 
+        // ---- AI 实时超分接入（REQ-116） --------------------------------
+        // 始终以 ai_target 分辨率喂给 SDL，避免每帧重建 texture。
+        const uint8_t* render_ptr = out;
+        int render_w = ow, render_h = oh;
+        if (aiup) {
+            // 1) 把当前帧投递给后台 worker（可能被丢弃覆盖）
+            aiup->submit(out, ow, oh);
+
+            // 2) 拉取最新已完成的输出
+            if (aiup->try_get_latest(ai_latest.data(), &ai_last_gen)) {
+                ai_have_latest = true;
+            }
+
+            // 3) 渲染到固定 target 尺寸：有最新就用最新；否则把当前帧最近邻
+            //    放大到 target，至少不让纹理尺寸来回变。
+            if (ai_have_latest) {
+                std::memcpy(render_buf.data(), ai_latest.data(), render_buf.size());
+            } else {
+                int sx = (ai_target_w + ow - 1) / ow;
+                int sy = (ai_target_h + oh - 1) / oh;
+                (void)sx; (void)sy;
+                for (int y = 0; y < ai_target_h; ++y) {
+                    int src_y = (int)((int64_t)y * oh / ai_target_h);
+                    if (src_y >= oh) src_y = oh - 1;
+                    const uint8_t* srow = out + (size_t)src_y * ow * 4;
+                    uint8_t* drow = render_buf.data() + (size_t)y * ai_target_w * 4;
+                    for (int x = 0; x < ai_target_w; ++x) {
+                        int src_x = (int)((int64_t)x * ow / ai_target_w);
+                        if (src_x >= ow) src_x = ow - 1;
+                        const uint8_t* sp = srow + (size_t)src_x * 4;
+                        drow[0] = sp[0]; drow[1] = sp[1];
+                        drow[2] = sp[2]; drow[3] = 255;
+                        drow += 4;
+                    }
+                }
+            }
+            render_ptr = render_buf.data();
+            render_w = ai_target_w;
+            render_h = ai_target_h;
+        }
+
         // Refresh HUD lines.
         if (ui.hud_visible()) {
             std::vector<std::string> lines;
@@ -482,11 +579,20 @@ int main(int argc, char* argv[]) {
                           haptics.current_color().g,
                           haptics.current_color().b);
             lines.push_back(rgb);
+            if (aiup) {
+                auto st = aiup->stats();
+                char ai[64];
+                std::snprintf(ai, sizeof(ai), "AIUP  %.0fms drop=%llu ok=%llu",
+                              st.ema_ms,
+                              (unsigned long long)st.dropped,
+                              (unsigned long long)st.processed);
+                lines.push_back(ai);
+            }
             if (ui.menu_open()) lines.push_back("PAUSED");
             ui.set_hud_lines(std::move(lines));
         }
 
-        ui.render_frame(out, ow, oh);
+        ui.render_frame(render_ptr, render_w, render_h);
         haptics.update_from_frame(ppu.frame().pixels);
 
         if (replay.recording()) {
@@ -497,6 +603,22 @@ int main(int argc, char* argv[]) {
         }
 
         ++frame_no;
+        if (aiup) {
+            Uint64 now = SDL_GetPerformanceCounter();
+            if (now - last_stat > perf_freq * 2) {
+                auto st = aiup->stats();
+                std::printf("[ai-upscale] frame=%d fps=%.1f submitted=%llu dropped=%llu "
+                            "processed=%llu failed=%llu last=%.0fms ema=%.0fms\n",
+                            frame_no, ui.fps(),
+                            (unsigned long long)st.submitted,
+                            (unsigned long long)st.dropped,
+                            (unsigned long long)st.processed,
+                            (unsigned long long)st.failed,
+                            st.last_ms, st.ema_ms);
+                std::fflush(stdout);
+                last_stat = now;
+            }
+        }
         if (ui.debug_overlay()) {
             Uint64 now = SDL_GetPerformanceCounter();
             if (now - last_stat > perf_freq) {

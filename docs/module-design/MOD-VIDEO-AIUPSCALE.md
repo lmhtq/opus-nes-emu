@@ -135,3 +135,4 @@ std::unique_ptr<IAiUpscaler> make_ncnn_subprocess_upscaler();
 ## 变更记录 (Change History)
 
 - 2026-05-01: 初版（PoC 子进程后端）
+- 2026-05-01: 增补 `AsyncUpscaleService`（`src/include/fcemu/ai_upscale_service.h` + `src/video/ai_upscale_service.cpp`）：单生产者/单消费者背压模型，主循环 submit 不阻塞，丢中间帧；fcemu 主程序 `--ai-upscale` CLI 启用；macOS 强制 SDL Metal renderer。

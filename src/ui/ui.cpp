@@ -79,6 +79,10 @@ bool UI::init(const WindowConfig& cfg) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return false;
     }
+#if defined(__APPLE__)
+    // macOS：优先使用 Metal renderer（SDL2 自带），便于 AI 超分输出大纹理上传。
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
+#endif
     auto* win = SDL_CreateWindow(cfg_.title.c_str(),
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  cfg_.width, cfg_.height,
@@ -90,8 +94,20 @@ bool UI::init(const WindowConfig& cfg) {
     auto* ren = SDL_CreateRenderer(win, -1,
                                    SDL_RENDERER_ACCELERATED |
                                    (cfg_.vsync ? SDL_RENDERER_PRESENTVSYNC : 0));
+#if defined(__APPLE__)
+    if (!ren) {
+        // metal 不可用时（如 dummy video driver / headless）回退到 software。
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+        ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+    }
+#endif
     if (!ren) { std::fprintf(stderr, "SDL_CreateRenderer: %s\n", SDL_GetError()); return false; }
     renderer_ = ren;
+    {
+        SDL_RendererInfo info{};
+        if (SDL_GetRendererInfo(ren, &info) == 0)
+            std::printf("[ui] SDL renderer: %s\n", info.name ? info.name : "?");
+    }
     SDL_RenderSetLogicalSize(ren, 256, 240);
 
     auto* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,

@@ -20,6 +20,7 @@ set(LIB_SOURCES
     src/ui/ui.cpp
     src/video/video_enhancer.cpp
     src/video/ai_upscaler.cpp
+    src/video/ai_upscale_service.cpp
     src/audio/audio_enhancer.cpp
     src/haptics/haptics.cpp
     src/replay/replay.cpp
