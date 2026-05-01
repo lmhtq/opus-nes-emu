@@ -19,6 +19,7 @@ set(LIB_SOURCES
     src/input/input.cpp
     src/ui/ui.cpp
     src/video/video_enhancer.cpp
+    src/video/ai_upscaler.cpp
     src/audio/audio_enhancer.cpp
     src/haptics/haptics.cpp
     src/replay/replay.cpp
@@ -32,6 +33,7 @@ set(LIB_SOURCES
 
 # 头文件目录
 include_directories(src/include)
+include_directories(third_party/stb)
 include_directories(${SDL2_INCLUDE_DIRS})
 
 # 静态库
@@ -50,6 +52,11 @@ target_link_libraries(fcemu
 # 无 SDL 依赖的 headless 跑分/冒烟工具
 add_executable(fcemu_headless tools/headless.cpp)
 target_link_libraries(fcemu_headless fcemu_lib)
+
+# REQ-116 PoC: AI 实时超分 demo（Mac 后端）
+add_executable(fcemu_ai_upscale_demo tools/ai_upscale_demo.cpp)
+target_include_directories(fcemu_ai_upscale_demo PRIVATE third_party/stb)
+target_link_libraries(fcemu_ai_upscale_demo fcemu_lib)
 
 # 测试
 enable_testing()
