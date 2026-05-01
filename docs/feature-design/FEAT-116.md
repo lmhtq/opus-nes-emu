@@ -98,6 +98,16 @@ fcemu_ai_upscale_demo <rom> [options]
 
 - `docs/hardware/ppu/rendering.md`
 
+## 后端实测对比（M2 base，SMB title）
+
+| 后端 | 模型 | scale | 单帧耗时 | worker 吞吐 | 主循环 fps | 备注 |
+|------|------|-------|---------|------------|-----------|------|
+| ncnn-subprocess | animevideov3 | 4 | ~510 ms | ~1.85 fps | 60 | 子进程冷启动是主要开销 |
+| ncnn-inprocess  | animevideov3 | 4 | ~285 ms | ~3.5 fps  | 40-48 | MoltenVK 直链，模型常驻 |
+| ncnn-inprocess  | animevideov3 | 2 | ~120-280 ms | ~6-8 fps  | 20-40 | 输出 512×480 |
+
+`dlopen libvulkan.1.dylib` 警告是 ncnn 先试 Vulkan loader 再回落 MoltenVK 的正常路径，不影响功能。
+
 ## 实时（在线）集成 — 第二阶段 (SDL/Metal Live Path)
 
 PoC 工具验证完算法可用性后，将其接入主程序 `src/main.cpp` 的渲染循环。
@@ -137,3 +147,4 @@ PoC 工具验证完算法可用性后，将其接入主程序 `src/main.cpp` 的
 
 - 2026-05-01: Initial version
 - 2026-05-01: SDL/Metal 实时集成（AsyncUpscaleService + main loop hookup）
+- 2026-05-01: ncnn-vulkan in-process 后端（`src/video/ai_upscaler_ncnn.cpp`）；M2 + MoltenVK，吞吐相比子进程提升 ~2×（285 vs 510 ms/帧）。

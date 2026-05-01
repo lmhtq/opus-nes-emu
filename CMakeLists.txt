@@ -8,6 +8,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SDL2 REQUIRED)
 find_package(OpenGL REQUIRED)
 
+# 可选：ncnn (REQ-116 in-process AI upscale 后端)。
+# brew install ncnn 即可。未安装时自动跳过该后端。
+# ncnn 的 cmake config 会硬要求 OpenMP::OpenMP_CXX 目标存在（即使 brew ncnn 未启用 OpenMP），
+# 这里需要手动定位 libomp 并给 OpenMP_CXX 提供 IMPORTED 目标。
+if(APPLE)
+    find_path(LIBOMP_INCLUDE_DIR omp.h
+        HINTS /opt/homebrew/opt/libomp/include /usr/local/opt/libomp/include)
+    find_library(LIBOMP_LIBRARY NAMES omp
+        HINTS /opt/homebrew/opt/libomp/lib /usr/local/opt/libomp/lib)
+    if(LIBOMP_INCLUDE_DIR AND LIBOMP_LIBRARY AND NOT TARGET OpenMP::OpenMP_CXX)
+        add_library(OpenMP::OpenMP_CXX UNKNOWN IMPORTED)
+        set_target_properties(OpenMP::OpenMP_CXX PROPERTIES
+            IMPORTED_LOCATION "${LIBOMP_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${LIBOMP_INCLUDE_DIR}"
+            INTERFACE_COMPILE_OPTIONS "-Xpreprocessor;-fopenmp")
+    endif()
+endif()
+find_package(ncnn QUIET CONFIG)
+if(ncnn_FOUND)
+    message(STATUS "ncnn found: in-process AI upscaler enabled")
+else()
+    message(STATUS "ncnn NOT found: only subprocess/nearest AI upscaler available")
+endif()
+
 # 库源文件（不含 main.cpp）
 set(LIB_SOURCES
     src/cpu/cpu.cpp
@@ -31,6 +55,9 @@ set(LIB_SOURCES
     src/overlay/overlay.cpp
     src/menu/menu.cpp
 )
+if(ncnn_FOUND)
+    list(APPEND LIB_SOURCES src/video/ai_upscaler_ncnn.cpp)
+endif()
 
 # 头文件目录
 include_directories(src/include)
@@ -41,6 +68,10 @@ include_directories(${SDL2_INCLUDE_DIRS})
 add_library(fcemu_lib STATIC ${LIB_SOURCES})
 target_include_directories(fcemu_lib PUBLIC src/include ${SDL2_INCLUDE_DIRS})
 target_link_libraries(fcemu_lib PUBLIC ${SDL2_LIBRARIES})
+if(ncnn_FOUND)
+    target_link_libraries(fcemu_lib PUBLIC ncnn)
+    target_compile_definitions(fcemu_lib PUBLIC FCEMU_HAVE_NCNN=1)
+endif()
 
 # 可执行文件
 add_executable(fcemu src/main.cpp)

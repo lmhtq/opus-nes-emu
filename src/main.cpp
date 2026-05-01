@@ -138,10 +138,13 @@ int main(int argc, char* argv[]) {
     std::string rom_path;
     bool ai_upscale_enabled = false;
     std::string ai_upscale_model = "realesr-animevideov3";
+    std::string ai_upscale_backend = "auto";  // auto | ncnn-inprocess | ncnn-subprocess
     int ai_upscale_scale = 4;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a.rfind("--ai-upscale", 0) == 0) {
+        if (a.rfind("--ai-upscale-backend=", 0) == 0) {
+            ai_upscale_backend = a.substr(21);
+        } else if (a.rfind("--ai-upscale", 0) == 0) {
             ai_upscale_enabled = true;
             auto eq = a.find('=');
             if (eq != std::string::npos) ai_upscale_model = a.substr(eq + 1);
@@ -253,20 +256,31 @@ int main(int argc, char* argv[]) {
         cfg.scale = ai_upscale_scale;
         cfg.tile_size = "0";
         cfg.thread_spec = "2:4:2";
-        // binary_path / model_dir 留空，让 NcnnSubprocessUpscaler 走环境变量
-        // FCEMU_AIUP_BIN / FCEMU_AIUP_MODEL_DIR 自动发现。
-        auto up = make_ncnn_subprocess_upscaler();
+        std::unique_ptr<IAiUpscaler> up;
+        std::string chosen;
+#if FCEMU_HAVE_NCNN
+        if (ai_upscale_backend == "auto" || ai_upscale_backend == "ncnn-inprocess") {
+            up = make_ncnn_inprocess_upscaler();
+            chosen = "ncnn-inprocess";
+        }
+#endif
+        if (!up) {
+            up = make_ncnn_subprocess_upscaler();
+            chosen = "ncnn-subprocess";
+        }
         aiup = std::make_unique<AsyncUpscaleService>();
         if (!aiup->start(std::move(up), cfg)) {
-            std::fprintf(stderr, "[ai-upscale] failed to start service "
-                         "(set FCEMU_AIUP_BIN / FCEMU_AIUP_MODEL_DIR)\n");
+            std::fprintf(stderr, "[ai-upscale] failed to start backend=%s "
+                         "(set FCEMU_AIUP_MODEL_DIR; subprocess 还需 FCEMU_AIUP_BIN)\n",
+                         chosen.c_str());
             aiup.reset();
         } else {
             ai_target_w = aiup->target_w();
             ai_target_h = aiup->target_h();
             render_buf.assign((size_t)ai_target_w * ai_target_h * 4, 0);
             ai_latest.assign(render_buf.size(), 0);
-            std::printf("[ai-upscale] enabled: model=%s scale=%d target=%dx%d\n",
+            std::printf("[ai-upscale] enabled: backend=%s model=%s scale=%d target=%dx%d\n",
+                        chosen.c_str(),
                         ai_upscale_model.c_str(), ai_upscale_scale,
                         ai_target_w, ai_target_h);
         }
