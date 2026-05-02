@@ -2,6 +2,7 @@
 #include "fcemu/ui.h"
 
 #include <SDL.h>
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -158,8 +159,29 @@ build_keymap(const std::map<std::string, std::string>& settings) {
     // Allow ini overrides like:
     //   key.p1.a=z   key.p1.b=x   key.p1.up=up   key.p1.a_turbo=a
     // value can be either an SDL_Keycode int or an SDL key name (e.g. "Z","Up","Return").
+    //
+    // Apply order matters when two actions claim the same key. std::map
+    // iterates alphabetically, which would let p2.* overwrite p1.* (e.g.
+    // a user who rebinds p1.b=H ends up with H actually triggering p2.b
+    // because p2.b=H is the seeded default and gets applied later). Player
+    // 1 is the primary controller, so we apply p1 LAST and let it win.
+    std::vector<const std::pair<const std::string, std::string>*> ordered;
+    ordered.reserve(settings.size());
     for (auto& kv : settings) {
-        if (kv.first.rfind("key.", 0) != 0) continue;
+        if (kv.first.rfind("key.", 0) == 0) ordered.push_back(&kv);
+    }
+    std::stable_sort(ordered.begin(), ordered.end(),
+        [](const auto* a, const auto* b) {
+            // p2.* < p1.* < everything else: lower rank applied first, last writer wins.
+            auto rank = [](const std::string& s) -> int {
+                if (s.rfind("key.p2.", 0) == 0) return 0;
+                if (s.rfind("key.p1.", 0) == 0) return 1;
+                return 2;
+            };
+            return rank(a->first) < rank(b->first);
+        });
+    for (auto* pkv : ordered) {
+        auto& kv = *pkv;
         const std::string action = kv.first.substr(4);
         auto it = action_table().find(action);
         if (it == action_table().end()) continue;
@@ -171,8 +193,8 @@ build_keymap(const std::map<std::string, std::string>& settings) {
         for (auto m = km.begin(); m != km.end(); ) {
             if (m->second == it->second) m = km.erase(m); else ++m;
         }
-        // If this key is already bound to a different action, the new binding
-        // wins; the previous owner will be silently lost (a conflict). The UI
+        // Last writer wins on key collision (p1 beats p2 thanks to the
+        // ordering above). The displaced action becomes unbound; the UI
         // surfaces this via UI::find_key_conflicts() at startup / on demand.
         km[k] = it->second;
     }
