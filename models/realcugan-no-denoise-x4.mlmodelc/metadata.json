@@ -1,0 +1,77 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "RealCUGAN UpCunet4x (up4x-latest-no-denoise.pth)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "output",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Float16",
+    "modelParameters" : [
+
+    ],
+    "author" : "fcemu\/REQ-116",
+    "specificationVersion" : 7,
+    "mlProgramOperationTypeHistogram" : {
+      "PixelShuffle" : 1,
+      "Ios16.cast" : 2,
+      "Ios16.mul" : 4,
+      "SliceByIndex" : 10,
+      "Ios16.sigmoid" : 4,
+      "UpsampleNearestNeighbor" : 1,
+      "Ios16.reduceMean" : 4,
+      "Ios16.add" : 5,
+      "Ios16.relu" : 4,
+      "Ios16.leakyRelu" : 20,
+      "Ios16.conv" : 27,
+      "Ios16.convTranspose" : 4,
+      "Pad" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "shortDescription" : "",
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 3 × 240 × 256 | 1 × 3 × 240 × 320",
+        "formattedType" : "MultiArray (Float32 1 × 3 × 240 × 256)",
+        "type" : "MultiArray",
+        "shape" : "[1, 3, 240, 256]",
+        "name" : "input",
+        "enumeratedShapes" : "[[1, 3, 240, 256], [1, 3, 240, 320]]"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-05-02",
+      "com.github.apple.coremltools.source" : "torch==2.11.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "realcugan_no_denoise_x4",
+    "method" : "predict"
+  }
+]

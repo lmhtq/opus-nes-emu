@@ -23,11 +23,22 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#include "stb_image_write.h"
 
 using namespace fcemu;
 
@@ -36,6 +47,132 @@ namespace {
 constexpr int CPU_CYCLES_PER_FRAME = 29781;
 constexpr uint32_t SAVESTATE_MAGIC   = 0x46434553u; // 'FCES'
 constexpr uint32_t SAVESTATE_VERSION = 1;
+
+// 拍照模式 toast 完成队列：daemon 后台线程把"保存成功/失败"消息塞入，
+// 主循环每帧 drain 一次 post 给 overlay。
+struct PhotoToast { std::string text; bool ok; };
+std::mutex g_photo_mutex;
+std::vector<PhotoToast> g_photo_queue;
+
+void photo_post(const std::string& text, bool ok) {
+    std::lock_guard<std::mutex> lk(g_photo_mutex);
+    g_photo_queue.push_back({text, ok});
+}
+
+// Try connecting to the photo daemon on the given unix socket and send a JSON
+// request. Returns true if the request was queued; the reply is awaited in a
+// detached thread and result posted via photo_post().
+bool photo_request_via_daemon(const std::string& sock_path,
+                              const std::string& in_path,
+                              const std::string& out_path,
+                              const std::string& prompt) {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (sock_path.size() >= sizeof(addr.sun_path)) { ::close(fd); return false; }
+    std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    std::ostringstream req;
+    req << "{\"in\":\"" << in_path << "\",\"out\":\"" << out_path << "\"";
+    if (!prompt.empty()) {
+        // Crude JSON escape: backslash + double quote.
+        std::string esc;
+        esc.reserve(prompt.size());
+        for (char c : prompt) {
+            if (c == '\\' || c == '"') esc.push_back('\\');
+            esc.push_back(c);
+        }
+        req << ",\"prompt\":\"" << esc << "\"";
+    }
+    req << "}\n";
+    std::string body = req.str();
+    ssize_t n = ::send(fd, body.data(), body.size(), 0);
+    if (n != static_cast<ssize_t>(body.size())) {
+        ::close(fd);
+        return false;
+    }
+
+    std::thread([fd, in_path, out_path]() {
+        std::string buf;
+        char tmp[1024];
+        while (true) {
+            ssize_t r = ::recv(fd, tmp, sizeof(tmp), 0);
+            if (r <= 0) break;
+            buf.append(tmp, tmp + r);
+            if (buf.find('\n') != std::string::npos) break;
+            if (buf.size() > 16 * 1024) break;
+        }
+        ::close(fd);
+        ::unlink(in_path.c_str());
+        bool ok = buf.find("\"ok\": true") != std::string::npos
+               || buf.find("\"ok\":true")  != std::string::npos;
+        std::string base = out_path;
+        auto slash = base.find_last_of('/');
+        if (slash != std::string::npos) base = base.substr(slash + 1);
+        if (ok) {
+            photo_post(std::string("Photo saved: ") + base, true);
+        } else {
+            photo_post("Photo FAILED (see daemon log)", false);
+        }
+    }).detach();
+    return true;
+}
+
+// 拍照模式：把 256x240 RGBA 帧写到 /tmp，spawn detached python 重绘脚本。
+// 输出落在 ~/Desktop/fcemu-photo/<timestamp>.png。
+void launch_photo_repaint(const uint8_t* rgba, int w, int h,
+                          const std::string& rom_basename) {
+    char ts[64];
+    std::time_t now = std::time(nullptr);
+    std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&now));
+    std::string in_path  = std::string("/tmp/fcemu_photo_") + ts + ".png";
+    const char* home = std::getenv("HOME");
+    std::string out_dir  = std::string(home ? home : ".") + "/Desktop/fcemu-photo";
+    std::string out_path = out_dir + "/" + rom_basename + "_" + ts + ".png";
+    std::string mkdir_cmd = std::string("mkdir -p '") + out_dir + "'";
+    (void)std::system(mkdir_cmd.c_str());
+    if (!stbi_write_png(in_path.c_str(), w, h, 4, rgba, w * 4)) {
+        std::fprintf(stderr, "[photo] failed to write %s\n", in_path.c_str());
+        return;
+    }
+
+    const char* sock_env = std::getenv("FCEMU_PHOTO_SOCKET");
+    std::string sock_path = (sock_env && *sock_env) ? sock_env
+                                                    : "/tmp/fcemu_photo.sock";
+    const char* prompt_env = std::getenv("FCEMU_PHOTO_PROMPT");
+    std::string prompt = (prompt_env && *prompt_env) ? prompt_env : "";
+
+    if (photo_request_via_daemon(sock_path, in_path, out_path, prompt)) {
+        std::printf("[photo] daemon -> %s\n", out_path.c_str());
+        return;
+    }
+
+    const char* script = std::getenv("FCEMU_PHOTO_SCRIPT");
+    const char* py     = std::getenv("FCEMU_PHOTO_PYTHON");
+    if (!script || !*script) {
+        std::fprintf(stderr,
+            "[photo] no daemon at %s and FCEMU_PHOTO_SCRIPT not set —\n"
+            "[photo] frame saved to %s. Start the daemon:\n"
+            "[photo]   python photo_repaint.py --daemon\n",
+            sock_path.c_str(), in_path.c_str());
+        photo_post("Photo: no daemon (frame saved to /tmp)", false);
+        return;
+    }
+    std::ostringstream cmd;
+    cmd << "( " << (py && *py ? py : "python3")
+        << " '" << script << "'"
+        << " --in '" << in_path << "'"
+        << " --out '" << out_path << "'";
+    if (!prompt.empty()) cmd << " --prompt \"" << prompt << "\"";
+    cmd << " >> '" << out_dir << "/photo.log' 2>&1 ; rm -f '" << in_path << "' ) &";
+    std::printf("[photo] spawn -> %s\n", out_path.c_str());
+    (void)std::system(cmd.str().c_str());
+}
 
 void map_buttons(StandardController& c, const InputSnapshot& s, bool p2) {
     if (!p2) {
@@ -130,24 +267,31 @@ int main(int argc, char* argv[]) {
     std::printf("Version 0.1.0\n");
 
     if (argc < 2) {
-        std::printf("Usage: %s <rom_file.nes> [--ai-upscale[=<model>]] [--ai-scale=N]\n", argv[0]);
+        std::printf("Usage: %s <rom_file.nes> [--ai-upscale[=<model>]] [--ai-scale=N] [--ai-mode={fast|medium|quality}]\n", argv[0]);
         return 1;
     }
 
     // ---- CLI flags --------------------------------------------------------
     std::string rom_path;
     bool ai_upscale_enabled = false;
-    std::string ai_upscale_model = "realesr-animevideov3";
+    std::string ai_upscale_model;             // empty => derived from mode
+    bool ai_model_explicit = false;
+    std::string ai_upscale_mode = "fast";     // fast | medium | quality
     std::string ai_upscale_backend = "auto";  // auto | ncnn-inprocess | ncnn-subprocess
     int ai_upscale_scale = 4;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a.rfind("--ai-upscale-backend=", 0) == 0) {
             ai_upscale_backend = a.substr(21);
+        } else if (a.rfind("--ai-mode=", 0) == 0) {
+            ai_upscale_mode = a.substr(10);
         } else if (a.rfind("--ai-upscale", 0) == 0) {
             ai_upscale_enabled = true;
             auto eq = a.find('=');
-            if (eq != std::string::npos) ai_upscale_model = a.substr(eq + 1);
+            if (eq != std::string::npos) {
+                ai_upscale_model = a.substr(eq + 1);
+                ai_model_explicit = true;
+            }
         } else if (a.rfind("--ai-scale=", 0) == 0) {
             ai_upscale_scale = std::atoi(a.c_str() + 11);
             if (ai_upscale_scale != 2 && ai_upscale_scale != 3 && ai_upscale_scale != 4)
@@ -157,6 +301,16 @@ int main(int argc, char* argv[]) {
         }
     }
     if (rom_path.empty()) rom_path = argv[1];
+
+    // Resolve --ai-mode -> default model (only when --ai-upscale=<model> not given).
+    // fast    : 60fps real-time      ~22ms  realcugan-denoise3x
+    // medium  : balanced ~17fps       ~58ms  realesrgan-anime-6b
+    // quality : best look, ~5fps     ~185ms  realesrgan-x4plus
+    if (!ai_model_explicit) {
+        if (ai_upscale_mode == "quality")      ai_upscale_model = "realesrgan-x4plus";
+        else if (ai_upscale_mode == "medium")  ai_upscale_model = "realesrgan-anime-6b";
+        else                                    ai_upscale_model = "realcugan-denoise3x";
+    }
 
     Cartridge cart;
     if (!cart.load_rom(rom_path.c_str())) {
@@ -285,8 +439,9 @@ int main(int argc, char* argv[]) {
             ai_target_h = aiup->target_h();
             render_buf.assign((size_t)ai_target_w * ai_target_h * 4, 0);
             ai_latest.assign(render_buf.size(), 0);
-            std::printf("[ai-upscale] enabled: backend=%s model=%s scale=%d target=%dx%d\n",
+            std::printf("[ai-upscale] enabled: backend=%s mode=%s model=%s scale=%d target=%dx%d\n",
                         chosen.c_str(),
+                        ai_upscale_mode.c_str(),
                         ai_upscale_model.c_str(), ai_upscale_scale,
                         ai_target_w, ai_target_h);
             // Make the visible window match the upscaled texture, otherwise
@@ -520,6 +675,29 @@ int main(int argc, char* argv[]) {
                 ui.overlay().post_toast("Loaded", 1.2f, Overlay::Green);
             else
                 ui.overlay().post_toast("Load FAILED", 2.0f, Overlay::Red);
+        }
+        if (snap.photo) {
+            // Use raw 256x240 PPU output (pre video-enhancer) — the python
+            // pipeline does its own letterbox/upscale.
+            std::string base = rom_path;
+            auto slash = base.find_last_of('/');
+            if (slash != std::string::npos) base = base.substr(slash + 1);
+            auto dot = base.find_last_of('.');
+            if (dot != std::string::npos) base = base.substr(0, dot);
+            launch_photo_repaint(ppu.frame().pixels, 256, 240, base);
+            ui.overlay().post_toast("Photo: repainting...", 2.0f, Overlay::Cyan);
+        }
+        // Drain photo daemon completion queue.
+        {
+            std::vector<PhotoToast> drained;
+            {
+                std::lock_guard<std::mutex> lk(g_photo_mutex);
+                drained.swap(g_photo_queue);
+            }
+            for (const auto& t : drained) {
+                ui.overlay().post_toast(t.text, 3.0f,
+                    t.ok ? Overlay::Green : Overlay::Red);
+            }
         }
 
         auto* sc1 = dynamic_cast<StandardController*>(input.get_controller(0));

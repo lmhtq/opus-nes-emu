@@ -77,6 +77,7 @@ ctest          # 运行单元 + e2e 测试
 | F3 | 切换调试日志（每秒 stdout 打印 FPS / 当前场景 / 主色） |
 | F4 | **打开主菜单**（亦可按 ESC） |
 | F5 | Reset |
+| **P** | **Photo Mode** — 当前帧 → SDXL Turbo 重绘 → `~/Desktop/fcemu-photo/`（需先启 daemon，见下） |
 | Tab | 切换屏幕 HUD（FPS / 场景 / 宽屏 / RGB 主色 / 暂停指示） |
 | ESC | 打开/关闭主菜单（菜单关闭时按下亦可，无菜单时再按一次退出） |
 
@@ -155,7 +156,44 @@ social.watch_file=/tmp/fcemu_events.txt
 | 直播互动 (REQ-113) | `SocialBridge` 监听 ini 配置的文本文件，行内事件触发震动 / 屏幕闪 / 屏幕震 / 礼物连发 |
 | 调试覆盖层 (REQ-010) | F3 切换；每秒打印 FPS、当前场景、宽屏状态、主色 |
 
-## 高级功能
+## AI 实时超分（mac / Apple Silicon）
+
+把 NES 输出的 256×240 实时超分到 1024×960，三档可选：
+
+```bash
+./build/fcemu --ai-mode=fast    rom.nes   # ~22 ms / 帧（默认 realcugan-denoise3x，60 fps）
+./build/fcemu --ai-mode=medium  rom.nes   # ~58 ms / 帧（realesrgan-anime-6b，~17 fps）
+./build/fcemu --ai-mode=quality rom.nes   # ~185 ms / 帧（realesrgan-x4plus，~5 fps，画质最强）
+./build/fcemu --ai-upscale=<model-name> rom.nes   # 显式指定模型（覆盖 mode）
+```
+
+后端：CoreML（Metal/ANE）；模型 mlmodelc 已部署在 `models/`，10+ 模型可切换。
+NVIDIA 后端待补。
+
+## Photo Mode（照片级重绘 - REQ-117）
+
+游戏中按 **P**：当前帧经 SDXL Turbo + ControlNet Tile 重绘成 1024×1024 摄影级
+画面，保存到 `~/Desktop/fcemu-photo/`。完成 toast 弹屏右下角。
+
+一次性安装（约 8.6 GiB 模型）：
+
+```bash
+cd tools/photo
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+./download_models.sh                       # 默认走 hf-mirror.com
+```
+
+启动 daemon（一次即可，常驻避免冷启动）：
+
+```bash
+nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py --daemon \
+  > ~/Desktop/fcemu-photo/daemon.log 2>&1 &
+```
+
+完整说明见 [docs/photo-mode.md](docs/photo-mode.md)。M2 上单帧 ≈ 90 s。
+
+
 
 | 功能 | 说明 |
 |------|------|

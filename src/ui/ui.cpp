@@ -242,7 +242,7 @@ static void apply_gamepad_axes(InputSnapshot& s, int player, SDL_GameController*
 }
 
 void UI::process_events() {
-    snap_.save_state = snap_.load_state = snap_.reset = false;
+    snap_.save_state = snap_.load_state = snap_.reset = snap_.photo = false;
     auto km = build_keymap(settings_);
 
     SDL_Event ev;
@@ -286,6 +286,7 @@ void UI::process_events() {
                 if (k == SDLK_F3)  { debug_overlay_ = !debug_overlay_; break; }
                 if (k == SDLK_F4)  { if (root_menu_) menu_ctrl_.open(root_menu_); break; }
                 if (k == SDLK_F5)  { snap_.reset = true; break; }
+                if (k == SDLK_p)   { snap_.photo = true; break; }   // C 档：拍照模式
                 if (k == SDLK_TAB) { hud_visible_ = !hud_visible_; break; }
 
                 auto it = km.find(k);

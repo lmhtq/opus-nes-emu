@@ -33,3 +33,7 @@ install_manifest.txt
 
 # Claude Code
 .claude/plans/
+fcemu.ini
+
+# Photo Mode runtime
+tools/photo/.venv/

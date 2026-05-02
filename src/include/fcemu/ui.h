@@ -40,6 +40,7 @@ struct InputSnapshot {
     bool reset=false;
     bool save_state=false;
     bool load_state=false;
+    bool photo=false;          // 拍照模式：触发一次 SDXL 重绘
 };
 
 using RomLoadCallback = std::function<void(const std::string&)>;

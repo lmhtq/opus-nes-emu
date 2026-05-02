@@ -47,7 +47,7 @@ struct UpscalerCaps {
 
 struct UpscalerConfig {
     int scale = 4;
-    std::string model_name = "realesr-animevideov3";
+    std::string model_name = "realcugan-denoise3x";
     std::string model_dir;     // 探测：本字段 > $FCEMU_AIUP_MODEL_DIR > "./models"
     std::string binary_path;   // 探测：本字段 > $FCEMU_AIUP_BIN > PATH
     std::string tile_size = "0";
