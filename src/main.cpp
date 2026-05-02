@@ -289,6 +289,10 @@ int main(int argc, char* argv[]) {
                         chosen.c_str(),
                         ai_upscale_model.c_str(), ai_upscale_scale,
                         ai_target_w, ai_target_h);
+            // Make the visible window match the upscaled texture, otherwise
+            // SDL would shrink the high-res output back down to fit the
+            // default 768x720 window — defeating the AI upscaling entirely.
+            ui.set_window_size(ai_target_w, ai_target_h);
         }
     }
 

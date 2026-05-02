@@ -79,6 +79,9 @@ public:
 
     // Misc.
     void set_title(const std::string& t);
+    // Resize the window (capped to current display bounds, centered).
+    // Used by AI upscale to make the visible window match the upscaled texture.
+    void set_window_size(int w, int h);
     void set_state(EmuState s);
     EmuState state() const { return state_; }
 

@@ -386,6 +386,28 @@ void UI::set_title(const std::string& t) {
     if (window_) SDL_SetWindowTitle((SDL_Window*)window_, t.c_str());
 }
 
+void UI::set_window_size(int w, int h) {
+    if (!window_ || w <= 0 || h <= 0) return;
+    SDL_Window* win = (SDL_Window*)window_;
+    int idx = SDL_GetWindowDisplayIndex(win);
+    SDL_Rect db{};
+    if (idx >= 0 && SDL_GetDisplayUsableBounds(idx, &db) == 0 && db.w > 0 && db.h > 0) {
+        // Leave a little headroom for menu bar / title bar.
+        const int max_w = db.w - 40;
+        const int max_h = db.h - 80;
+        if (w > max_w || h > max_h) {
+            double sx = (double)max_w / w;
+            double sy = (double)max_h / h;
+            double s = sx < sy ? sx : sy;
+            w = (int)(w * s);
+            h = (int)(h * s);
+        }
+    }
+    SDL_SetWindowSize(win, w, h);
+    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    cfg_.width = w; cfg_.height = h;
+}
+
 void UI::set_state(EmuState s) {
     state_ = s;
     if (state_cb_) state_cb_(s);
