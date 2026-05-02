@@ -120,3 +120,5 @@ docs/hardware/cpu/instruction-set.md
 | REQ-113 | 直播互动模式 | 待设计 |
 | REQ-114 | 即时精彩回放 | 待设计 |
 | REQ-115 | 游戏资源分析器 | 待设计 |
+| REQ-116 | AI 实时超分（CoreML ANE 60fps，A/B 档） | ✅ 已实现（[REQ-116](specs/REQ-116-ai-realtime-upscale.md)） |
+| REQ-117 | Photo Mode（SDXL Turbo 离线照片级重绘，C 档） | ✅ 已实现（[REQ-117](specs/REQ-117-photo-mode.md), [photo-mode.md](photo-mode.md)） |

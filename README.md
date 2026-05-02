@@ -144,18 +144,6 @@ social.watch_file=/tmp/fcemu_events.txt
 
 > 渲染零依赖：内置一份公有领域 8×8 位图字体（font8x8_basic by Daniel Hepper），叠加在 PPU 输出帧缓冲上，再走原有的视觉增强管线。
 
-
-
-| 功能 | 说明 |
-|------|------|
-| 存档/读档 (REQ-007) | F1 写入 `<rom>.state`（含 CPU/PPU/APU/RAM/Mapper bank/PRG-RAM/CHR-RAM）；F2 读回 |
-| 宽屏 (REQ-103) | 设 `video.widescreen=true` 后输出 320x240，两侧由边缘列复制并做亮度渐变 |
-| 动态音效场景 (REQ-107) | `AudioEnhancer` 每 30 帧根据 RMS 自动切换 `action`/`boss`/`menu`/`calm`，调整 EQ + 立体声宽度 + 混响 |
-| 音频 remix (REQ-109) | `AudioEnhancer::load_remix_track(name, raw_s16le_path)` + `trigger_remix_oneshot()` 把外部 PCM 一次性混入输出 |
-| RGB 灯光 (REQ-112) | `HapticsManager` 每帧从画面提取主色（16x16 网格 + 饱和度加权），通过 `set_rgb_callback()` 输出给硬件 |
-| 直播互动 (REQ-113) | `SocialBridge` 监听 ini 配置的文本文件，行内事件触发震动 / 屏幕闪 / 屏幕震 / 礼物连发 |
-| 调试覆盖层 (REQ-010) | F3 切换；每秒打印 FPS、当前场景、宽屏状态、主色 |
-
 ## AI 实时超分（mac / Apple Silicon）
 
 把 NES 输出的 256×240 实时超分到 1024×960，三档可选：
@@ -192,6 +180,8 @@ nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py --daemon \
 ```
 
 完整说明见 [docs/photo-mode.md](docs/photo-mode.md)。M2 上单帧 ≈ 90 s。
+
+## 高级功能
 
 
 
