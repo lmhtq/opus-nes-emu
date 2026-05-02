@@ -137,8 +137,20 @@ public:
             return false;
         }
 
-        const int W = in.width, H = in.height, S = cfg_.scale;
+        const int W_real = in.width, H_real = in.height, S = cfg_.scale;
+        // CoreML's EnumeratedShapes mechanism on this model defaults to the
+        // first shape (320). Feeding a 256-wide MLMultiArray still gets
+        // resolved as 320 internally, producing a 1280-wide output that gets
+        // unpacked at the wrong stride and tiles 4x horizontally. To stay
+        // compatible without re-exporting, always pad input to the model's
+        // native width (320) when smaller, then center-crop the output back
+        // to (W_real * S) so callers see the contract they expect.
+        const int kModelW = 320; // matches model's first EnumeratedShape
+        const int W = (W_real < kModelW) ? kModelW : W_real;
+        const int H = H_real;
         const int OW = W * S, OH = H * S;
+        const int OW_real = W_real * S;
+        const int pad_left = (W - W_real) / 2;
 
         @autoreleasepool {
             MLModel* m = (__bridge MLModel*)model_;
@@ -170,11 +182,13 @@ public:
                 if (!fp_) { if (err) *err = "build feature provider failed"; return false; }
 
                 pred_opts_ = [[MLPredictionOptions alloc] init];
-                // Bind output buffer so CoreML writes directly into out_arr_,
-                // avoiding a per-frame internal allocation + memcpy.
-                if ([pred_opts_ respondsToSelector:@selector(setOutputBackings:)]) {
-                    pred_opts_.outputBackings = @{ oname: out_arr_ };
-                }
+                // NOTE: do NOT use setOutputBackings here. With this model's
+                // EnumeratedShapes (256 / 320 widths), pinning a backing of the
+                // 256-output size made CoreML silently fall back to the 320
+                // input variant and produce 1280-wide output, which then got
+                // unpacked at the wrong stride (visible as ~4x horizontal
+                // repetition + vertical compression). We instead read the true
+                // shape from the returned MLMultiArray below.
                 cached_W_ = W; cached_H_ = H;
 
                 in_planeR_.resize((size_t)H * W);
@@ -188,11 +202,38 @@ public:
             }
 
             // === input fill: RGBA8 -> CHW float32 [0,1] via vImage ===
+            // If padding is needed (W_real < W), edge-extend the original
+            // frame horizontally into a W-wide RGBA scratch first, then run
+            // the existing tightly-packed planar conversion.
+            const uint8_t* src_rgba = in.rgba.data();
+            size_t src_stride = (size_t)W_real * 4;
+            if (W_real != W) {
+                in_padded_rgba_.resize((size_t)H * W * 4);
+                for (int y = 0; y < H; ++y) {
+                    const uint8_t* sr = in.rgba.data() + (size_t)y * W_real * 4;
+                    uint8_t* dr = in_padded_rgba_.data() + (size_t)y * W * 4;
+                    // left edge-extend
+                    const uint8_t* edge_l = sr;
+                    for (int x = 0; x < pad_left; ++x) {
+                        std::memcpy(dr + x * 4, edge_l, 4);
+                    }
+                    // center copy
+                    std::memcpy(dr + pad_left * 4, sr, (size_t)W_real * 4);
+                    // right edge-extend
+                    const uint8_t* edge_r = sr + (W_real - 1) * 4;
+                    for (int x = pad_left + W_real; x < W; ++x) {
+                        std::memcpy(dr + x * 4, edge_r, 4);
+                    }
+                }
+                src_rgba = in_padded_rgba_.data();
+                src_stride = (size_t)W * 4;
+            }
+
             float* p = (float*)in_arr_.dataPointer;
             const int chan_stride = H * W;
-            vImage_Buffer src_buf = { (void*)in.rgba.data(),
+            vImage_Buffer src_buf = { (void*)src_rgba,
                                       (vImagePixelCount)H, (vImagePixelCount)W,
-                                      (size_t)W * 4 };
+                                      src_stride };
             vImage_Buffer dR = { in_planeR_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
             vImage_Buffer dG = { in_planeG_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
             vImage_Buffer dB = { in_planeB_.data(), (vImagePixelCount)H, (vImagePixelCount)W, (size_t)W };
@@ -220,14 +261,49 @@ public:
                 if (err) *err = "output is not multiarray";
                 return false;
             }
+            // One-time log: verify the shape/strides we are about to unpack.
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                std::string ss, st;
+                for (NSNumber* n in om.shape)   { ss += std::to_string([n longValue]) + " "; }
+                for (NSNumber* n in om.strides) { st += std::to_string([n longValue]) + " "; }
+                std::fprintf(stderr,
+                    "[ai-upscale-coreml] output shape=[%s] strides=[%s] dtype=%lu\n",
+                    ss.c_str(), st.c_str(), (unsigned long)om.dataType);
+            }
+
+            // Trust the *actual* dimensions/strides reported by CoreML rather
+            // than W*S/H*S — the model can resolve a different EnumeratedShape
+            // than we requested (see comment near pred_opts_).
+            int OH_actual = OH, OW_actual = OW;
+            long stride_c = (long)OH * OW; // channel stride (in elements)
+            long stride_h = (long)OW;      // row stride (in elements)
+            if (om.shape.count >= 4) {
+                OH_actual = (int)[om.shape[2] longValue];
+                OW_actual = (int)[om.shape[3] longValue];
+            }
+            if (om.strides.count >= 4) {
+                stride_c = [om.strides[1] longValue];
+                stride_h = [om.strides[2] longValue];
+            }
+            // Center-crop the model output back to the caller's expected
+            // resolution (OW_real x OH).  pad_left==0 means no crop.
+            const int crop_left_cols = pad_left * S;
+            const int OW_out = OW_real;          // visible width
+            const int OH_out = H_real * S;       // visible height (==OH)
+            // Re-point planar working buffers.
+            out_planeR_.resize((size_t)OH_out * OW_out);
+            out_planeG_.resize((size_t)OH_out * OW_out);
+            out_planeB_.resize((size_t)OH_out * OW_out);
+            if (out_planeA_.size() != (size_t)OH_out * OW_out)
+                out_planeA_.assign((size_t)OH_out * OW_out, 255);
             // Expect shape (1,3,OH,OW); pack to RGBA8 via vImage.
             // Supports both Float32 and Float16 outputs.
             out.id = in.id;
-            out.width = OW;
-            out.height = OH;
-            // Reuse a recycled output buffer if available — avoids the
-            // multi-MB page-fault tax that hits any freshly-allocated region.
-            const size_t need = (size_t)OW * OH * 4;
+            out.width = OW_out;
+            out.height = OH_out;
+            const size_t need = (size_t)OW_out * OH_out * 4;
             {
                 std::lock_guard<std::mutex> g(pool_mu_);
                 if (!pool_.empty()) {
@@ -236,25 +312,26 @@ public:
                 }
             }
             if (out.rgba.size() != need) out.rgba.resize(need);
-            const int ostride = OH * OW;
+            const long ostride = stride_c;
+            (void)OW_actual;
 
             vImage_Buffer dst_buf = { out.rgba.data(),
-                                      (vImagePixelCount)OH, (vImagePixelCount)OW,
-                                      (size_t)OW * 4 };
-            vImage_Buffer pR = { out_planeR_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
-            vImage_Buffer pG = { out_planeG_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
-            vImage_Buffer pB = { out_planeB_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
-            vImage_Buffer pA = { out_planeA_.data(), (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW };
+                                      (vImagePixelCount)OH_out, (vImagePixelCount)OW_out,
+                                      (size_t)OW_out * 4 };
+            vImage_Buffer pR = { out_planeR_.data(), (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)OW_out };
+            vImage_Buffer pG = { out_planeG_.data(), (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)OW_out };
+            vImage_Buffer pB = { out_planeB_.data(), (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)OW_out };
+            vImage_Buffer pA = { out_planeA_.data(), (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)OW_out };
             bool wrote_rgba_directly = false;
 
             if (om.dataType == MLMultiArrayDataTypeFloat32) {
                 const float* op = (const float*)om.dataPointer;
-                vImage_Buffer fR_o = { (void*)(op + 0 * ostride),
-                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
-                vImage_Buffer fG_o = { (void*)(op + 1 * ostride),
-                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
-                vImage_Buffer fB_o = { (void*)(op + 2 * ostride),
-                                       (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                vImage_Buffer fR_o = { (void*)(op + 0 * ostride + crop_left_cols),
+                                       (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)stride_h * 4 };
+                vImage_Buffer fG_o = { (void*)(op + 1 * ostride + crop_left_cols),
+                                       (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)stride_h * 4 };
+                vImage_Buffer fB_o = { (void*)(op + 2 * ostride + crop_left_cols),
+                                       (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)stride_h * 4 };
                 vImageConvert_PlanarFtoPlanar8(&fR_o, &pR, 1.0f, 0.0f, kvImageNoFlags);
                 vImageConvert_PlanarFtoPlanar8(&fG_o, &pG, 1.0f, 0.0f, kvImageNoFlags);
                 vImageConvert_PlanarFtoPlanar8(&fB_o, &pB, 1.0f, 0.0f, kvImageNoFlags);
@@ -263,50 +340,61 @@ public:
 #if defined(__ARM_NEON)
                 // Single-pass NEON kernel: 3 F16 planes -> RGBA8 (A=255).
                 // Reads 3 * 2B + writes 4B per pixel — ~half the memory traffic
-                // of the F16->F32->U8->interleave chain, and avoids the giant
-                // F32 scratch buffer entirely.
-                const __fp16* rp = (const __fp16*)(op + 0 * ostride);
-                const __fp16* gp = (const __fp16*)(op + 1 * ostride);
-                const __fp16* bp = (const __fp16*)(op + 2 * ostride);
-                uint8_t* dp = out.rgba.data();
-                const size_t N = (size_t)ostride;
+                // of the F16->F32->U8->interleave chain.
                 const float16x8_t v255 = vdupq_n_f16((__fp16)255.0f);
                 const float16x8_t vzero = vdupq_n_f16((__fp16)0.0f);
-                size_t i = 0;
                 const uint8x8_t alpha = vdup_n_u8(255);
-                for (; i + 8 <= N; i += 8) {
-                    float16x8_t fr = vld1q_f16(rp + i);
-                    float16x8_t fg = vld1q_f16(gp + i);
-                    float16x8_t fb = vld1q_f16(bp + i);
-                    fr = vminq_f16(vmaxq_f16(vmulq_f16(fr, v255), vzero), v255);
-                    fg = vminq_f16(vmaxq_f16(vmulq_f16(fg, v255), vzero), v255);
-                    fb = vminq_f16(vmaxq_f16(vmulq_f16(fb, v255), vzero), v255);
-                    uint16x8_t ur = vcvtq_u16_f16(fr);
-                    uint16x8_t ug = vcvtq_u16_f16(fg);
-                    uint16x8_t ub = vcvtq_u16_f16(fb);
-                    uint8x8x4_t pix = {{ vmovn_u16(ur), vmovn_u16(ug), vmovn_u16(ub), alpha }};
-                    vst4_u8(dp + i * 4, pix);
+                auto convert_row = [&](const __fp16* rp, const __fp16* gp,
+                                       const __fp16* bp, uint8_t* dp, int n) {
+                    int i = 0;
+                    for (; i + 8 <= n; i += 8) {
+                        float16x8_t fr = vld1q_f16(rp + i);
+                        float16x8_t fg = vld1q_f16(gp + i);
+                        float16x8_t fb = vld1q_f16(bp + i);
+                        fr = vminq_f16(vmaxq_f16(vmulq_f16(fr, v255), vzero), v255);
+                        fg = vminq_f16(vmaxq_f16(vmulq_f16(fg, v255), vzero), v255);
+                        fb = vminq_f16(vmaxq_f16(vmulq_f16(fb, v255), vzero), v255);
+                        uint16x8_t ur = vcvtq_u16_f16(fr);
+                        uint16x8_t ug = vcvtq_u16_f16(fg);
+                        uint16x8_t ub = vcvtq_u16_f16(fb);
+                        uint8x8x4_t pix = {{ vmovn_u16(ur), vmovn_u16(ug), vmovn_u16(ub), alpha }};
+                        vst4_u8(dp + i * 4, pix);
+                    }
+                    for (; i < n; ++i) {
+                        auto cvt = [](float v){
+                            v = v * 255.0f; if (v < 0) v = 0; if (v > 255) v = 255;
+                            return (uint8_t)v;
+                        };
+                        dp[i*4+0] = cvt((float)rp[i]);
+                        dp[i*4+1] = cvt((float)gp[i]);
+                        dp[i*4+2] = cvt((float)bp[i]);
+                        dp[i*4+3] = 255;
+                    }
+                };
+                const __fp16* R0 = (const __fp16*)(op + 0 * ostride) + crop_left_cols;
+                const __fp16* G0 = (const __fp16*)(op + 1 * ostride) + crop_left_cols;
+                const __fp16* B0 = (const __fp16*)(op + 2 * ostride) + crop_left_cols;
+                if (crop_left_cols == 0 && stride_h == OW_out) {
+                    // fully tightly-packed AND no crop: single fast pass
+                    convert_row(R0, G0, B0, out.rgba.data(),
+                                OH_out * OW_out);
+                } else {
+                    for (int y = 0; y < OH_out; ++y) {
+                        convert_row(R0 + (long)y * stride_h,
+                                    G0 + (long)y * stride_h,
+                                    B0 + (long)y * stride_h,
+                                    out.rgba.data() + (size_t)y * OW_out * 4,
+                                    OW_out);
+                    }
                 }
-                for (; i < N; ++i) {
-                    auto cvt = [](float v){
-                        v = v * 255.0f; if (v < 0) v = 0; if (v > 255) v = 255;
-                        return (uint8_t)v;
-                    };
-                    dp[i*4+0] = cvt((float)rp[i]);
-                    dp[i*4+1] = cvt((float)gp[i]);
-                    dp[i*4+2] = cvt((float)bp[i]);
-                    dp[i*4+3] = 255;
-                }
-                // Skip the trailing planar->ARGB8888 interleave; we wrote RGBA
-                // directly. Mark via a flag.
                 wrote_rgba_directly = true;
 #else
-                f16_scratch_.resize((size_t)ostride);
+                f16_scratch_.resize((size_t)OH_out * OW_out);
                 auto convert_plane = [&](const uint16_t* base, vImage_Buffer& outU8) {
-                    vImage_Buffer fbuf16 = { (void*)base,
-                                             (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 2 };
+                    vImage_Buffer fbuf16 = { (void*)(base + crop_left_cols),
+                                             (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)stride_h * 2 };
                     vImage_Buffer fbuf32 = { f16_scratch_.data(),
-                                             (vImagePixelCount)OH, (vImagePixelCount)OW, (size_t)OW * 4 };
+                                             (vImagePixelCount)OH_out, (vImagePixelCount)OW_out, (size_t)OW_out * 4 };
                     vImageConvert_Planar16FtoPlanarF(&fbuf16, &fbuf32, kvImageNoFlags);
                     vImageConvert_PlanarFtoPlanar8(&fbuf32, &outU8, 1.0f, 0.0f, kvImageNoFlags);
                 };
@@ -362,6 +450,7 @@ private:
     std::vector<uint8_t> in_planeR_, in_planeG_, in_planeB_, in_planeA_;
     std::vector<uint8_t> out_planeR_, out_planeG_, out_planeB_, out_planeA_;
     std::vector<float>   f16_scratch_;
+    std::vector<uint8_t> in_padded_rgba_; // edge-extended input (W_real -> W)
     std::mutex pool_mu_;
     std::vector<ByteVec> pool_;
 };
