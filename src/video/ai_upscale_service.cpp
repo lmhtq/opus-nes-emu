@@ -60,6 +60,13 @@ bool AsyncUpscaleService::try_get_latest(uint8_t* out_rgba, uint64_t* last_gen) 
     std::lock_guard<std::mutex> lk(out_mu_);
     if (!out_valid_) return false;
     if (last_gen && *last_gen == out_gen_) return false;
+    // The caller's buffer is sized for the previously-observed target_w_/h_.
+    // If the worker has just produced a frame of a different size (e.g. WS
+    // was toggled and the next frame went 256→320 wide → 1024→1280 wide
+    // out), copying the bigger buffer would overflow. Skip this frame and
+    // let the caller observe the new target_w_/h_ via the getters and grow
+    // its buffer first.
+    if (out_buf_.size() != (size_t)target_w_ * target_h_ * 4) return false;
     std::memcpy(out_rgba, out_buf_.data(), out_buf_.size());
     if (last_gen) *last_gen = out_gen_;
     return true;

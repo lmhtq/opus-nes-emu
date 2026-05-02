@@ -559,6 +559,27 @@ int main(int argc, char* argv[]) {
             // 1) 把当前帧投递给后台 worker（可能被丢弃覆盖）
             aiup->submit(out, ow, oh);
 
+            // 1.5) 校正：upscaler 输出尺寸可能随输入改变（例如 widescreen
+            //      把 256×240 切到 320×240，输出从 1024 变成 1280）。当
+            //      service 报告的 target_w/h 与我们当前缓冲不一致时，重新
+            //      分配 ai_latest / render_buf 并调整窗口。否则会按旧 stride
+            //      解新尺寸的数据，画面横向重复 + 扫描线压缩。
+            int actual_tw = aiup->target_w();
+            int actual_th = aiup->target_h();
+            if (actual_tw > 0 && actual_th > 0 &&
+                (actual_tw != ai_target_w || actual_th != ai_target_h)) {
+                ai_target_w = actual_tw;
+                ai_target_h = actual_th;
+                size_t need = (size_t)ai_target_w * ai_target_h * 4;
+                render_buf.assign(need, 0);
+                ai_latest.assign(need, 0);
+                ai_have_latest = false;
+                ai_last_gen = 0;
+                ui.set_window_size(ai_target_w, ai_target_h);
+                std::printf("[ai-upscale] target resized to %dx%d (input %dx%d)\n",
+                            ai_target_w, ai_target_h, ow, oh);
+            }
+
             // 2) 拉取最新已完成的输出
             if (aiup->try_get_latest(ai_latest.data(), &ai_last_gen)) {
                 ai_have_latest = true;
