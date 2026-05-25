@@ -13,7 +13,8 @@
 ┌──────────────────────── 外部资源 (磁盘 / 环境) ──────────────────────────────┐
 │  ROM (.nes)   fcemu.ini   <rom>.state   <rom>.sav   presets/   models/      │
 │                                              social.watch_file              │
-│                              ~/Desktop/fcemu-photo/   (photo daemon socket) │
+│                  fcemu-photo/{<rom>_<ts>.png,<rom>_<ts>_orig.png}            │
+│                                          (+ photo daemon UNIX socket)       │
 └──┬──────────┬────────────┬──────────────────┬───────────────┬────────┬──────┘
    │          │            │                  │               │        │
    ▼          ▼            ▼                  ▼               ▼        ▼

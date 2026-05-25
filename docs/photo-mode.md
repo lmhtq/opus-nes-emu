@@ -1,8 +1,15 @@
 # Photo Mode (REQ-117)
 
-游戏里按 **P** 键，把当前 PPU 帧（256×240）通过云端生图大模型 API 重绘成高分辨率画面，保存到 `~/Desktop/fcemu-photo/`。
+游戏里按 **P** 键，把当前 PPU 帧（256×240）通过云端生图大模型 API 重绘成高分辨率画面，**同时保留原始 256×240 PPU 帧**作并排对比，落到项目根的 `fcemu-photo/`（可用 `FCEMU_PHOTO_DIR` 改路径）。
 
-实现：fcemu 通过 Unix socket `/tmp/fcemu_photo.sock` 推送请求给一个常驻的 Python daemon。daemon 是一个**多 provider 的 HTTPS 客户端**——本身不跑模型，只负责把帧上传到云端 API，把结果写回磁盘。
+每次按 P 产出一对同时间戳前缀的文件：
+
+```
+fcemu-photo/SuperMarioBros_20260526-143012_orig.png   # 256×240 原图
+fcemu-photo/SuperMarioBros_20260526-143012.png        # 云端 API 重绘
+```
+
+实现：fcemu 通过 Unix socket `/tmp/fcemu_photo.sock` 推送请求给一个常驻的 Python daemon。daemon 是一个**多 provider 的 HTTPS 客户端**——本身不跑模型，只负责把帧上传到云端 API，把结果写回磁盘。原图由 C++ 侧直接写盘（不经 daemon），所有 provider 行为一致。
 
 ## 当前支持的 provider
 
@@ -122,6 +129,7 @@ C++ 端只解析 `"ok": true`，回包多余字段被忽略——加新字段是
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
+| `FCEMU_PHOTO_DIR`        | `./fcemu-photo` | 照片输出目录（C++ 端） |
 | `FCEMU_PHOTO_SOCKET`     | `/tmp/fcemu_photo.sock` | daemon 套接字路径（C++ + Python 共用） |
 | `FCEMU_PHOTO_PROMPT`     | provider 默认 | 全局 prompt 覆盖（C++ 端） |
 | `FCEMU_PHOTO_BACKEND`    | `ark`  | `--daemon` 不带 `--backend` 时的默认 |

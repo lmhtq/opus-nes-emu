@@ -171,7 +171,14 @@ NVIDIA 后端待补。
 
 ## Photo Mode（照片级重绘 - REQ-117）
 
-游戏中按 **P**：当前帧通过云端生图大模型 API（豆包 SeedEdit / OpenAI gpt-image-1 / …）重绘成高分辨率画面，保存到 `~/Desktop/fcemu-photo/`。完成 toast 弹屏右下角。
+游戏中按 **P**：当前帧通过云端生图大模型 API（豆包 Seedream 4.0 / 5.0、OpenAI gpt-image-1 等）重绘成高分辨率画面，**同时保留 256×240 原始 PPU 帧**作并排对比。完成 toast 弹屏右下角。
+
+输出目录默认为项目根的 `fcemu-photo/`（可用 `FCEMU_PHOTO_DIR` 环境变量改路径），每次按 P 产出两个同时间戳前缀的文件：
+
+```
+fcemu-photo/SuperMarioBros_20260526-143012_orig.png   # 256×240 原图
+fcemu-photo/SuperMarioBros_20260526-143012.png        # 云端 API 重绘
+```
 
 一次性安装（仅 `requests + Pillow`，秒级，不下任何模型权重）：
 
@@ -185,9 +192,11 @@ python3 -m venv .venv
 
 ```bash
 export ARK_API_KEY=xxx       # 豆包/火山方舟；或 OPENAI_API_KEY=sk-xxx
+# 可选: 升级到 Seedream 5.0
+export ARK_IMAGE_MODEL=doubao-seedream-5-0-260128
 nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py \
   --daemon --backend=ark \
-  > ~/Desktop/fcemu-photo/daemon.log 2>&1 &
+  > fcemu-photo/daemon.log 2>&1 &
 ```
 
 完整说明、provider 列表、加新 provider 流程见 [docs/photo-mode.md](docs/photo-mode.md)。单帧延时约 10–30 s（视提供商和网络）。
@@ -205,6 +214,7 @@ nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py \
 | RGB 灯光 (REQ-112) | `HapticsManager` 每帧从画面提取主色（16x16 网格 + 饱和度加权），通过 `set_rgb_callback()` 输出给硬件 |
 | 直播互动 (REQ-113) | `SocialBridge` 监听 ini 配置的文本文件，行内事件触发震动 / 屏幕闪 / 屏幕震 / 礼物连发 |
 | 调试覆盖层 (REQ-010) | F3 切换；每秒打印 FPS、当前场景、宽屏状态、主色 |
+| 拍照重绘 (REQ-117) | **P 键**触发；当前帧经云端 Seedream/SeedEdit/gpt-image-1 重绘到 `fcemu-photo/<rom>_<ts>.png`，并同步保存原始 256×240 帧 `<rom>_<ts>_orig.png` 供并排对比。多 provider HTTP 客户端，无本地模型。详见 [docs/photo-mode.md](docs/photo-mode.md) |
 
 ## 文档
 

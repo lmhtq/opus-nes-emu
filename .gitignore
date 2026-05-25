@@ -45,3 +45,7 @@ roms/*
 # Per-ROM runtime data (battery RAM, save states)
 *.sav
 *.state
+
+# Photo Mode output (重绘结果 + _orig.png 原图, 见 fcemu-photo/README.md)
+fcemu-photo/*
+!fcemu-photo/README.md

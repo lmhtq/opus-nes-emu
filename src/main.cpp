@@ -123,17 +123,20 @@ bool photo_request_via_daemon(const std::string& sock_path,
     return true;
 }
 
-// 拍照模式：把 256x240 RGBA 帧写到 /tmp，spawn detached python 重绘脚本。
-// 输出落在 ~/Desktop/fcemu-photo/<timestamp>.png；同时把原始 256x240
-// 帧另存为 <rom>_<ts>_orig.png 以便和重绘结果做并排对比。
+// 拍照模式：把 256x240 RGBA 帧写到 /tmp，把请求送给 Photo daemon，
+// 然后 daemon 把重绘结果写到 <out_dir>/<rom>_<ts>.png；同时这里把原始
+// 256x240 帧另存为 <rom>_<ts>_orig.png 以便和重绘结果做并排对比。
+//
+// out_dir 取 $FCEMU_PHOTO_DIR (绝对/相对均可)，缺省 "./fcemu-photo"
+// (项目根下有一个同名占位目录, 仓库内运行直接落地).
 void launch_photo_repaint(const uint8_t* rgba, int w, int h,
                           const std::string& rom_basename) {
     char ts[64];
     std::time_t now = std::time(nullptr);
     std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&now));
     std::string in_path  = std::string("/tmp/fcemu_photo_") + ts + ".png";
-    const char* home = std::getenv("HOME");
-    std::string out_dir  = std::string(home ? home : ".") + "/Desktop/fcemu-photo";
+    const char* dir_env = std::getenv("FCEMU_PHOTO_DIR");
+    std::string out_dir = (dir_env && *dir_env) ? dir_env : "fcemu-photo";
     std::string out_path  = out_dir + "/" + rom_basename + "_" + ts + ".png";
     std::string orig_path = out_dir + "/" + rom_basename + "_" + ts + "_orig.png";
     std::string mkdir_cmd = std::string("mkdir -p '") + out_dir + "'";
