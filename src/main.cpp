@@ -124,7 +124,8 @@ bool photo_request_via_daemon(const std::string& sock_path,
 }
 
 // 拍照模式：把 256x240 RGBA 帧写到 /tmp，spawn detached python 重绘脚本。
-// 输出落在 ~/Desktop/fcemu-photo/<timestamp>.png。
+// 输出落在 ~/Desktop/fcemu-photo/<timestamp>.png；同时把原始 256x240
+// 帧另存为 <rom>_<ts>_orig.png 以便和重绘结果做并排对比。
 void launch_photo_repaint(const uint8_t* rgba, int w, int h,
                           const std::string& rom_basename) {
     char ts[64];
@@ -133,12 +134,21 @@ void launch_photo_repaint(const uint8_t* rgba, int w, int h,
     std::string in_path  = std::string("/tmp/fcemu_photo_") + ts + ".png";
     const char* home = std::getenv("HOME");
     std::string out_dir  = std::string(home ? home : ".") + "/Desktop/fcemu-photo";
-    std::string out_path = out_dir + "/" + rom_basename + "_" + ts + ".png";
+    std::string out_path  = out_dir + "/" + rom_basename + "_" + ts + ".png";
+    std::string orig_path = out_dir + "/" + rom_basename + "_" + ts + "_orig.png";
     std::string mkdir_cmd = std::string("mkdir -p '") + out_dir + "'";
     (void)std::system(mkdir_cmd.c_str());
     if (!stbi_write_png(in_path.c_str(), w, h, 4, rgba, w * 4)) {
         std::fprintf(stderr, "[photo] failed to write %s\n", in_path.c_str());
         return;
+    }
+    // Persist the raw PPU frame alongside the repaint so users can compare.
+    // Non-fatal: a failed orig dump shouldn't block the API call.
+    if (!stbi_write_png(orig_path.c_str(), w, h, 4, rgba, w * 4)) {
+        std::fprintf(stderr, "[photo] failed to write orig %s\n",
+                     orig_path.c_str());
+    } else {
+        std::printf("[photo] orig -> %s\n", orig_path.c_str());
     }
 
     const char* sock_env = std::getenv("FCEMU_PHOTO_SOCKET");
