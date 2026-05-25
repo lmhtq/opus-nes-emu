@@ -2,6 +2,35 @@
 
 fcemu 是一个 FC（Family Computer / NES）模拟器，主打**现代声光电体验**。
 
+## ✦ Showcase — Photo Mode 拍照重绘 (REQ-117)
+
+游戏中按 **P**：当前 256×240 PPU 帧通过云端 Seedream 4.0 / 5.0 重绘成高分辨率"摄影级"画面，左右并列对照。同步保存 `_orig.png` 原图便于事后再加工。
+
+<table>
+  <tr>
+    <th width="50%">原始 PPU 帧 (256×240)</th>
+    <th width="50%">Seedream 重绘</th>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/photo-showcase/contra-1_orig.png" width="100%"></td>
+    <td><img src="docs/assets/photo-showcase/contra-1.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/photo-showcase/contra-2_orig.png" width="100%"></td>
+    <td><img src="docs/assets/photo-showcase/contra-2.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/photo-showcase/mario-1_orig.png" width="100%"></td>
+    <td><img src="docs/assets/photo-showcase/mario-1.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/photo-showcase/mario-2_orig.png" width="100%"></td>
+    <td><img src="docs/assets/photo-showcase/mario-2.png" width="100%"></td>
+  </tr>
+</table>
+
+> Photo Mode 是一个**多 provider 的云端 API 客户端**（豆包 Seedream/SeedEdit、OpenAI gpt-image-1 …），通过 UNIX socket 与 emulator 解耦，按 P 即拍。完整用法见 [Photo Mode](#photo-mode照片级重绘---req-117) 段或 [docs/photo-mode.md](docs/photo-mode.md)。
+
 ## 特色功能
 
 ### 视觉增强
