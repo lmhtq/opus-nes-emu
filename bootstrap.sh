@@ -373,13 +373,16 @@ ${C_CYAN}== Usage examples ==${C_RESET}
 
   ${C_DIM}# Photo Mode daemon (REQ-117), 一次启动常驻${C_RESET}
   export ARK_API_KEY=your-key
+  ${C_DIM}# 可选: 默认 doubao-seedream-4-0-250828, 升级到 5.0 加这一行${C_RESET}
+  export ARK_IMAGE_MODEL=doubao-seedream-5-0-260128
   nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py \\
       --daemon --backend=ark > ~/Desktop/fcemu-photo/daemon.log 2>&1 &
   ${C_DIM}# 然后游戏中按 P，照片落到 ~/Desktop/fcemu-photo/${C_RESET}
 
-  ${C_DIM}# 命令行单帧调试 Photo Mode${C_RESET}
+  ${C_DIM}# 命令行单帧调试 Photo Mode (单帧也能用 --model 临时换)${C_RESET}
   tools/photo/.venv/bin/python tools/photo/photo_repaint.py \\
-      --backend=ark --in /tmp/frame.png --out /tmp/out.png \\
+      --backend=ark --model=doubao-seedream-5-0-260128 \\
+      --in /tmp/frame.png --out /tmp/out.png \\
       --prompt "photorealistic 1980s Mario, 35mm film"
 
   ${C_DIM}# 跑测试${C_RESET}

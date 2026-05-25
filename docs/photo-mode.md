@@ -13,31 +13,31 @@
 
 ### Ark 可用模型 ID（按需自取）
 
-火山方舟控制台**「在线推理 → 模型广场」**里 inference endpoint 名就是这里要填的 `model`。常见的几个：
+火山方舟控制台**「在线推理 → 模型广场」**里 inference endpoint 名就是这里要填的 `model`。当前可直接复制粘贴：
 
-| 系列 | 推荐场景 | 示例 model ID（以官方控制台为准） |
+| 系列 | endpoint ID | 说明 |
 |---|---|---|
-| Seedream 4.x | 多模态 t2i + i2i，当前主推 | `doubao-seedream-4-0-250828`, `doubao-seedream-4-5-*` |
-| Seedream 5.x | 更高画质，需开通 | `doubao-seedream-5-*` |
-| SeedEdit 3.x | 老 i2i 模型，逐步下线 | `doubao-seededit-3-0-i2i-250628` |
-| Seedream 3.0 t2i | 纯文生图 | `doubao-seedream-3-0-t2i-250415` |
+| **Seedream 5.0** | `doubao-seedream-5-0-260128` | 当前最强，画质 / 细节 / 文字渲染最好，单帧成本最高 |
+| **Seedream 4.0** | `doubao-seedream-4-0-250828` | 主力多模态 t2i + i2i，性价比首选，默认值 |
+| Seedream 3.0 t2i | `doubao-seedream-3-0-t2i-250415` | 纯文生图老版 |
+| SeedEdit 3.0 i2i | `doubao-seededit-3-0-i2i-250628` | 老 i2i，逐步下线，仅在指定地区可用 |
 
 切换方式（三档优先级，前者覆盖后者）：
 
 ```bash
 # 1) 单请求级（C++ 端将来可以扩展协议，curl 也能这样测）
-echo '{"in":"frame.png","out":"out.png","prompt":"...","model":"doubao-seedream-4-5-xxxx"}' \
+echo '{"in":"frame.png","out":"out.png","prompt":"...","model":"doubao-seedream-5-0-260128"}' \
   | nc -U /tmp/fcemu_photo.sock
 
 # 2) CLI 旗标（daemon 或单帧都行）
-./tools/photo/photo_repaint.py --daemon --backend=ark --model=doubao-seedream-4-5-xxxx
+./tools/photo/photo_repaint.py --daemon --backend=ark --model=doubao-seedream-5-0-260128
 
 # 3) 环境变量（最省事，启动前 export 一次）
-export ARK_IMAGE_MODEL=doubao-seedream-4-5-xxxx
+export ARK_IMAGE_MODEL=doubao-seedream-5-0-260128
 ./tools/photo/photo_repaint.py --daemon --backend=ark
 ```
 
-> 404 `InvalidEndpointOrModel.NotFound` = 你的账号没这个 endpoint 或拼错了。去控制台复制 endpoint 名再贴。
+> 404 `InvalidEndpointOrModel.NotFound` = 你的账号没开通这个 endpoint 或拼错了。去控制台复制 endpoint 名再贴。
 
 加新 provider 是 `photo_repaint.py` 里增加一个 `Provider` 子类（实现 `repaint()`）并注册到 `PROVIDERS` 字典——通常 ~40 行。
 

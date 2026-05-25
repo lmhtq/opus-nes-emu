@@ -102,12 +102,15 @@ class Provider:
 class ArkProvider(Provider):
     """Volcano Ark image-to-image / text-to-image.
 
-    The same `images/generations` endpoint serves multiple model families:
-      - Seedream 4.x  (multimodal t2i+i2i, recommended)   doubao-seedream-4-*
-      - SeedEdit 3.0  (i2i only, older)                   doubao-seededit-3-0-i2i-*
-      - Seedream 3.0  (pure t2i)                          doubao-seedream-3-0-t2i-*
+    The same `images/generations` endpoint serves multiple model families.
+    Known-good endpoint IDs (copy from Ark console "在线推理 / 模型广场"):
 
-    Default is Seedream 4.0. Override via (in order of priority):
+      doubao-seedream-5-0-260128         # Seedream 5.0  最强, 最贵
+      doubao-seedream-4-0-250828         # Seedream 4.0  主力 t2i+i2i, 默认
+      doubao-seedream-3-0-t2i-250415     # Seedream 3.0  纯 t2i 老版
+      doubao-seededit-3-0-i2i-250628     # SeedEdit 3.0  老 i2i, 部分账号下线
+
+    Override the default via (priority high→low):
       1) per-request JSON  {"model": "..."}
       2) CLI flag          --model=<id>
       3) env var           ARK_IMAGE_MODEL=<id>
@@ -118,8 +121,8 @@ class ArkProvider(Provider):
     """
     name = "ark"
 
-    # Seedream 4.0 is the current stable Ark image model that supports both
-    # t2i and i2i. Set ARK_IMAGE_MODEL to switch to 4.5 / 5 / SeedEdit / etc.
+    # Seedream 4.0 as a balanced default. To upgrade to 5.0 set
+    # ARK_IMAGE_MODEL=doubao-seedream-5-0-260128 (or pass --model).
     DEFAULT_MODEL = "doubao-seedream-4-0-250828"
     ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 
