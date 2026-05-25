@@ -12,6 +12,7 @@
 | `module-design/` | 模块设计（Stage 3） | [README](module-design/README.md), [Template](module-design/template.md) |
 | `feature-design/` | 功能设计（Stage 4） | [README](feature-design/README.md), [Template](feature-design/template.md) |
 | `traceability/` | 跨阶段追溯 | [Matrix](traceability/matrix.md) |
+| —              | 系统架构总览（运行时数据流） | [architecture.md](architecture.md) |
 
 ## 8 阶段开发流程
 

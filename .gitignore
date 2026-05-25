@@ -37,3 +37,11 @@ fcemu.ini
 
 # Photo Mode runtime
 tools/photo/.venv/
+
+# ROMs — never commit copyrighted material. Place your own .nes files here.
+roms/*
+!roms/README.md
+
+# Per-ROM runtime data (battery RAM, save states)
+*.sav
+*.state

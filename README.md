@@ -45,11 +45,22 @@ fcemu 是一个 FC（Family Computer / NES）模拟器，主打**现代声光电
 
 ## 构建
 
-依赖：
-- C++17 编译器
-- CMake ≥ 3.16
-- SDL2 (`brew install sdl2` / `apt install libsdl2-dev`)
-- OpenGL（macOS / Linux / Windows 原生提供）
+### 一键引导（推荐）
+
+```bash
+./bootstrap.sh                 # check + build (不自动装系统依赖)
+./bootstrap.sh check           # 只检查缺什么
+./bootstrap.sh deps            # 用 brew / apt 装缺失项 (需要确认)
+./bootstrap.sh photo           # 给 Photo Mode 装 Python venv
+./bootstrap.sh all             # check + deps + build + photo, 全套
+./bootstrap.sh help            # 完整子命令列表
+```
+
+脚本会按平台 (macOS/Homebrew, Linux/apt) 自检 cmake、SDL2、OpenGL、ncnn(可选)、libomp(可选)、python3+venv(可选)，构建完成后打印一组用法示例。安装前会要求确认。
+
+### 手工构建
+
+依赖：C++17 编译器、CMake ≥ 3.16、SDL2 (`brew install sdl2` / `apt install libsdl2-dev`)、OpenGL（macOS / Linux / Windows 原生提供）
 
 ```bash
 mkdir build && cd build
@@ -61,7 +72,7 @@ ctest          # 运行单元 + e2e 测试
 ## 运行
 
 ```bash
-./fcemu path/to/rom.nes
+./build/fcemu path/to/rom.nes
 ```
 
 按键映射（默认）：
@@ -160,26 +171,26 @@ NVIDIA 后端待补。
 
 ## Photo Mode（照片级重绘 - REQ-117）
 
-游戏中按 **P**：当前帧经 SDXL Turbo + ControlNet Tile 重绘成 1024×1024 摄影级
-画面，保存到 `~/Desktop/fcemu-photo/`。完成 toast 弹屏右下角。
+游戏中按 **P**：当前帧通过云端生图大模型 API（豆包 SeedEdit / OpenAI gpt-image-1 / …）重绘成高分辨率画面，保存到 `~/Desktop/fcemu-photo/`。完成 toast 弹屏右下角。
 
-一次性安装（约 8.6 GiB 模型）：
+一次性安装（仅 `requests + Pillow`，秒级，不下任何模型权重）：
 
 ```bash
 cd tools/photo
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-./download_models.sh                       # 默认走 hf-mirror.com
 ```
 
-启动 daemon（一次即可，常驻避免冷启动）：
+设置 API key 并启动 daemon（一次即可，常驻）：
 
 ```bash
-nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py --daemon \
+export ARK_API_KEY=xxx       # 豆包/火山方舟；或 OPENAI_API_KEY=sk-xxx
+nohup tools/photo/.venv/bin/python tools/photo/photo_repaint.py \
+  --daemon --backend=ark \
   > ~/Desktop/fcemu-photo/daemon.log 2>&1 &
 ```
 
-完整说明见 [docs/photo-mode.md](docs/photo-mode.md)。M2 上单帧 ≈ 90 s。
+完整说明、provider 列表、加新 provider 流程见 [docs/photo-mode.md](docs/photo-mode.md)。单帧延时约 10–30 s（视提供商和网络）。
 
 ## 高级功能
 

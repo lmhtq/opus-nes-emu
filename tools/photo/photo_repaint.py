@@ -1,25 +1,62 @@
 #!/usr/bin/env python3
-"""SDXL Turbo + (optional) ControlNet Tile photo-repaint of FC frames.
+"""fcemu Photo Mode — cloud image-generation API client.
 
-Usage:
-  photo_repaint.py --in frame.png --out result.png \
-      [--prompt "..."] [--strength 0.6] [--steps 4] [--cn-scale 0.7] [--seed 42]
+Repaints the current FC frame (256x240 PNG) through a hosted image-edit model
+and writes a high-resolution PNG back to disk. Talks to fcemu over the same
+UNIX-socket / line-JSON protocol the local SDXL daemon used to speak, so the
+C++ side (launch_photo_repaint) is unchanged.
 
-Loads SDXL Turbo (1-4 steps) on MPS, optionally uses a Tile ControlNet to keep
-the original composition. We pre-upscale the 256x240 input with nearest-neighbour
-to 1024x1024 (letterbox) before feeding the diffusion pipeline, since the model
-is trained at 512+ resolution.
+Supported providers (chosen via --backend or FCEMU_PHOTO_BACKEND, or per-
+request via JSON "backend" field):
+  - ark       Doubao SeedEdit / Seedream  (火山方舟 Ark)        env: ARK_API_KEY
+  - openai    OpenAI Images edit (gpt-image-1)                 env: OPENAI_API_KEY
+
+Adding a new provider is a ~40-line class that implements `repaint()`.
+
+Daemon protocol (line-delimited JSON, one request → one reply):
+  request : {"in": "...", "out": "...", "prompt": "...",
+             "backend": "ark|openai" (optional, defaults to daemon's),
+             "size": "1024x1024" (optional),
+             "seed": 42 (optional),
+             "guidance_scale": 5.5 (optional, ark only),
+             "neg": "..." (optional, ignored by providers that don't take it)}
+  reply   : {"ok": true,  "out": "...", "ms": 1234}
+            {"ok": false, "error": "..."}
 """
-import argparse, os, sys, time, math
+import argparse
+import base64
+import io
+import json
+import os
+import socket
+import sys
+import time
+import traceback
 from pathlib import Path
-from PIL import Image, ImageOps
-import torch
+from typing import Optional
 
-DEFAULT_NEG = "blurry, lowres, ugly, deformed, watermark, text, bad anatomy"
+import requests
+from PIL import Image
 
 
-def fit_canvas(img: Image.Image, side: int = 1024, fill=(0, 0, 0)) -> Image.Image:
-    """Letterbox img into a side x side canvas using nearest-neighbour upscale."""
+# ---------------------------------------------------------------------------
+# Image helpers
+# ---------------------------------------------------------------------------
+
+def upscale_nearest(img: Image.Image, target_long: int = 1024) -> Image.Image:
+    """NEAREST upscale so the longer side equals target_long. Keeps hard pixel
+    edges intact — the API sees crisp pixel art, not a blurred 256x240."""
+    w, h = img.size
+    if max(w, h) >= target_long:
+        return img
+    s = target_long / max(w, h)
+    return img.resize((int(round(w * s)), int(round(h * s))), Image.NEAREST)
+
+
+def letterbox_square(img: Image.Image, side: int = 1024,
+                     fill=(0, 0, 0)) -> Image.Image:
+    """NEAREST upscale + letterbox into side x side. Used by providers that
+    want a square input (OpenAI gpt-image-1)."""
     w, h = img.size
     s = min(side / w, side / h)
     nw, nh = int(round(w * s)), int(round(h * s))
@@ -29,98 +66,184 @@ def fit_canvas(img: Image.Image, side: int = 1024, fill=(0, 0, 0)) -> Image.Imag
     return canvas
 
 
-def load_pipe(use_controlnet: bool, dtype):
-    from diffusers import (
-        StableDiffusionXLImg2ImgPipeline,
-        StableDiffusionXLControlNetImg2ImgPipeline,
-        ControlNetModel,
-        AutoencoderKL,
-    )
-
-    base = os.environ.get("SDXL_TURBO_DIR", os.path.expanduser("~/sdxl-turbo-local"))
-    vae_dir = os.environ.get("SDXL_VAE_FP16_DIR", os.path.expanduser("~/sdxl-extras/vae-fp16-fix"))
-    cn_dir_default = os.path.expanduser("~/sdxl-extras/cn-tile")
-    load_kw = dict(torch_dtype=dtype)
-    if os.path.isdir(base):
-        load_kw["variant"] = "fp16"
-        load_kw["local_files_only"] = True
-    else:
-        load_kw["variant"] = "fp16"
-
-    vae = None
-    if os.path.isdir(vae_dir):
-        print(f"[photo] using fp16-fix VAE: {vae_dir}", flush=True)
-        vae = AutoencoderKL.from_pretrained(vae_dir, torch_dtype=dtype)
-
-    if use_controlnet:
-        cn_repo = os.environ.get("CN_TILE_REPO", cn_dir_default)
-        print(f"[photo] loading ControlNet: {cn_repo}", flush=True)
-        cn = ControlNetModel.from_pretrained(cn_repo, torch_dtype=dtype)
-        print(f"[photo] loading SDXL Turbo from {base} (img2img + cn)", flush=True)
-        if vae is not None:
-            load_kw["vae"] = vae
-        pipe = StableDiffusionXLControlNetImg2ImgPipeline.from_pretrained(
-            base, controlnet=cn, **load_kw,
-        )
-    else:
-        print(f"[photo] loading SDXL Turbo from {base} (img2img)", flush=True)
-        if vae is not None:
-            load_kw["vae"] = vae
-        pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-            base, **load_kw,
-        )
-    pipe.set_progress_bar_config(disable=True)
-    return pipe
+def encode_png_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
-def render(pipe, use_cn: bool, device: str, *, inp: str, out: str,
-           prompt: str, neg: str = DEFAULT_NEG,
-           strength: float = 0.55, steps: int = 4, guidance: float = 0.0,
-           seed: int = 42, side: int = 1024, cn_scale: float = 0.6) -> float:
-    src = Image.open(inp).convert("RGB")
-    init = fit_canvas(src, side)
-    gen = torch.Generator(device=device if device != "mps" else "cpu").manual_seed(seed)
-    kwargs = dict(
-        prompt=prompt, negative_prompt=neg, image=init,
-        strength=strength,
-        num_inference_steps=max(steps, max(2, int(math.ceil(1 / max(strength, 0.01))))),
-        guidance_scale=guidance, generator=gen,
-    )
-    if use_cn:
-        kwargs.update(control_image=init, controlnet_conditioning_scale=cn_scale)
-    t0 = time.time()
-    img = pipe(**kwargs).images[0]
-    Path(out).parent.mkdir(parents=True, exist_ok=True)
-    img.save(out)
-    return time.time() - t0
+def write_output(data: bytes, out_path: str) -> None:
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "wb") as f:
+        f.write(data)
 
 
-def serve(socket_path: str, use_cn: bool, device: str, dtype):
-    """Run a Unix-socket daemon. Each accepted connection sends one JSON request
-    and receives one JSON reply, line-delimited.
+# ---------------------------------------------------------------------------
+# Provider base
+# ---------------------------------------------------------------------------
 
-    Request : {"in": "path", "out": "path", "prompt": "...", "strength": 0.55,
-               "steps": 4, "cn_scale": 0.6, "seed": 42, "side": 1024}
-    Reply   : {"ok": true, "out": "path", "ms": 1234}     on success
-              {"ok": false, "error": "..."}              on failure
+DEFAULT_PROMPT = ("photorealistic, cinematic, ultra detailed, 35mm film, "
+                  "dramatic lighting")
+
+
+class Provider:
+    name = "abstract"
+
+    def repaint(self, in_path: str, out_path: str, *,
+                prompt: str, **opts) -> int:
+        """Run one repaint. Return elapsed milliseconds. Raise on failure."""
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# Doubao SeedEdit / Seedream  (Volcano Ark)
+# ---------------------------------------------------------------------------
+
+class ArkProvider(Provider):
+    """Volcano Ark image-to-image (SeedEdit) and text-to-image (Seedream).
+
+    The same `images/generations` endpoint serves both; whether it behaves as
+    img2img depends on whether `image` is supplied and the chosen model. We
+    default to SeedEdit 3.0 i2i — pass --ark-model or ARK_IMAGE_MODEL to
+    switch (e.g. doubao-seedream-3-0-t2i-250415 for pure text2img).
     """
-    import json, socket, traceback
+    name = "ark"
 
-    t0 = time.time()
-    pipe = load_pipe(use_cn, dtype).to(device)
-    print(f"[photo-daemon] pipeline ready in {time.time()-t0:.1f}s "
-          f"cn={use_cn} device={device}", flush=True)
+    DEFAULT_MODEL = "doubao-seededit-3-0-i2i-250628"
+    ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 
-    # Warm up (compiles MPS kernels) using a 1x1 black PNG.
-    try:
-        warm_in = "/tmp/.fcemu_photo_warm.png"
-        Image.new("RGB", (16, 16), (0, 0, 0)).save(warm_in)
-        warm_out = "/tmp/.fcemu_photo_warm_out.png"
-        ms = render(pipe, use_cn, device, inp=warm_in, out=warm_out,
-                    prompt="warmup", steps=2, strength=0.3)
-        print(f"[photo-daemon] warmup {ms:.2f}s", flush=True)
-    except Exception as e:
-        print(f"[photo-daemon] warmup failed: {e}", flush=True)
+    def __init__(self, model: Optional[str] = None):
+        self.api_key = os.environ.get("ARK_API_KEY", "").strip()
+        if not self.api_key:
+            raise RuntimeError("ARK_API_KEY not set")
+        self.model = (model or os.environ.get("ARK_IMAGE_MODEL")
+                      or self.DEFAULT_MODEL)
+        self.session = requests.Session()
+
+    def repaint(self, in_path, out_path, *, prompt, **opts):
+        t0 = time.time()
+        src = Image.open(in_path).convert("RGB")
+        upscaled = upscale_nearest(src, opts.get("target_long", 1024))
+        b64 = base64.b64encode(encode_png_bytes(upscaled)).decode("ascii")
+
+        body = {
+            "model": self.model,
+            "prompt": prompt or DEFAULT_PROMPT,
+            "image": f"data:image/png;base64,{b64}",
+            "response_format": "url",
+            "size": opts.get("size", "adaptive"),
+            "seed": int(opts.get("seed", 42)),
+            "guidance_scale": float(opts.get("guidance_scale", 5.5)),
+            "watermark": bool(opts.get("watermark", False)),
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        r = self.session.post(self.ENDPOINT, headers=headers,
+                              json=body, timeout=180)
+        if r.status_code >= 400:
+            raise RuntimeError(f"Ark HTTP {r.status_code}: {r.text[:400]}")
+        data = r.json()
+        items = data.get("data") or []
+        if not items:
+            raise RuntimeError(f"Ark response missing data: {data}")
+        item = items[0]
+        if "url" in item:
+            img_bytes = self.session.get(item["url"], timeout=60).content
+        elif "b64_json" in item:
+            img_bytes = base64.b64decode(item["b64_json"])
+        else:
+            raise RuntimeError(f"Ark response has no url/b64_json: {item}")
+        write_output(img_bytes, out_path)
+        return int((time.time() - t0) * 1000)
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Images (gpt-image-1, edit endpoint)
+# ---------------------------------------------------------------------------
+
+class OpenAIProvider(Provider):
+    """OpenAI image edit. gpt-image-1 always returns b64_json. We send the
+    image as a square PNG via multipart, matching the model's preferred input.
+    """
+    name = "openai"
+
+    DEFAULT_MODEL = "gpt-image-1"
+    ENDPOINT = "https://api.openai.com/v1/images/edits"
+
+    def __init__(self, model: Optional[str] = None):
+        self.api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY not set")
+        self.model = (model or os.environ.get("OPENAI_IMAGE_MODEL")
+                      or self.DEFAULT_MODEL)
+        self.session = requests.Session()
+
+    def repaint(self, in_path, out_path, *, prompt, **opts):
+        t0 = time.time()
+        src = Image.open(in_path).convert("RGB")
+        side = int(opts.get("side", 1024))
+        squared = letterbox_square(src, side=side)
+        png_bytes = encode_png_bytes(squared)
+
+        size = opts.get("size", f"{side}x{side}")
+        files = {"image": ("frame.png", png_bytes, "image/png")}
+        data = {
+            "model": self.model,
+            "prompt": prompt or DEFAULT_PROMPT,
+            "size": size,
+            "n": "1",
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        r = self.session.post(self.ENDPOINT, headers=headers,
+                              data=data, files=files, timeout=180)
+        if r.status_code >= 400:
+            raise RuntimeError(f"OpenAI HTTP {r.status_code}: {r.text[:400]}")
+        payload = r.json()
+        items = payload.get("data") or []
+        if not items:
+            raise RuntimeError(f"OpenAI response missing data: {payload}")
+        item = items[0]
+        if "b64_json" in item:
+            img_bytes = base64.b64decode(item["b64_json"])
+        elif "url" in item:
+            img_bytes = self.session.get(item["url"], timeout=60).content
+        else:
+            raise RuntimeError(f"OpenAI response has no b64/url: {item}")
+        write_output(img_bytes, out_path)
+        return int((time.time() - t0) * 1000)
+
+
+# ---------------------------------------------------------------------------
+# Provider registry
+# ---------------------------------------------------------------------------
+
+PROVIDERS = {
+    "ark": ArkProvider,
+    "openai": OpenAIProvider,
+}
+
+
+def make_provider(name: str) -> Provider:
+    cls = PROVIDERS.get(name)
+    if cls is None:
+        raise RuntimeError(f"unknown backend: {name} "
+                           f"(known: {', '.join(PROVIDERS)})")
+    return cls()
+
+
+# ---------------------------------------------------------------------------
+# Daemon
+# ---------------------------------------------------------------------------
+
+def serve(socket_path: str, default_backend: str) -> None:
+    # Eager-construct the default provider so missing API keys fail fast at
+    # daemon startup (not on first P press).
+    providers: dict[str, Provider] = {default_backend: make_provider(default_backend)}
+    print(f"[photo-daemon] default backend={default_backend} "
+          f"model={getattr(providers[default_backend], 'model', '?')}",
+          flush=True)
 
     if os.path.exists(socket_path):
         os.unlink(socket_path)
@@ -143,73 +266,85 @@ def serve(socket_path: str, use_cn: bool, device: str, dtype):
                     if len(buf) > 1024 * 64:
                         break
                 if not buf:
-                    conn.close(); continue
+                    conn.close()
+                    continue
                 req = json.loads(buf.decode("utf-8"))
-                inp = req["in"]; out = req["out"]
-                prompt = req.get("prompt") or "photorealistic, cinematic, ultra detailed, 35mm film"
+                backend = req.get("backend") or default_backend
+                if backend not in providers:
+                    providers[backend] = make_provider(backend)
+                provider = providers[backend]
+                inp = req["in"]
+                out = req["out"]
+                prompt = req.get("prompt") or DEFAULT_PROMPT
                 try:
-                    ms = render(
-                        pipe, use_cn, device, inp=inp, out=out, prompt=prompt,
-                        neg=req.get("neg", DEFAULT_NEG),
-                        strength=float(req.get("strength", 0.55)),
-                        steps=int(req.get("steps", 4)),
-                        guidance=float(req.get("guidance", 0.0)),
-                        seed=int(req.get("seed", 42)),
-                        side=int(req.get("side", 1024)),
-                        cn_scale=float(req.get("cn_scale", 0.6)),
+                    ms = provider.repaint(
+                        inp, out,
+                        prompt=prompt,
+                        seed=req.get("seed", 42),
+                        size=req.get("size"),
+                        side=req.get("side", 1024),
+                        guidance_scale=req.get("guidance_scale", 5.5),
+                        target_long=req.get("target_long", 1024),
                     )
-                    rep = {"ok": True, "out": out, "ms": int(ms * 1000)}
-                    print(f"[photo-daemon] {os.path.basename(out)} {int(ms*1000)}ms",
-                          flush=True)
+                    rep = {"ok": True, "out": out, "ms": ms,
+                           "backend": backend}
+                    print(f"[photo-daemon] {backend} "
+                          f"{os.path.basename(out)} {ms}ms", flush=True)
                 except Exception as e:
                     traceback.print_exc()
-                    rep = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                    rep = {"ok": False, "error": f"{type(e).__name__}: {e}",
+                           "backend": backend}
                 conn.sendall((json.dumps(rep) + "\n").encode("utf-8"))
             finally:
-                try: conn.close()
-                except Exception: pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     finally:
-        try: os.unlink(socket_path)
-        except Exception: pass
+        try:
+            os.unlink(socket_path)
+        except Exception:
+            pass
 
+
+# ---------------------------------------------------------------------------
+# CLI entry
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp")
     ap.add_argument("--out", dest="out")
-    ap.add_argument("--prompt", default="photorealistic 1980s Mario in the Mushroom Kingdom, cinematic, 35mm film, dramatic lighting")
-    ap.add_argument("--neg", default=DEFAULT_NEG)
-    ap.add_argument("--strength", type=float, default=0.55)
-    ap.add_argument("--steps", type=int, default=4)
-    ap.add_argument("--guidance", type=float, default=0.0)
+    ap.add_argument("--prompt", default=DEFAULT_PROMPT)
+    ap.add_argument("--backend",
+                    default=os.environ.get("FCEMU_PHOTO_BACKEND", "ark"),
+                    choices=sorted(PROVIDERS.keys()))
+    ap.add_argument("--size", default=None,
+                    help='Output size like "1024x1024". Provider-specific.')
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--side", type=int, default=1024)
-    ap.add_argument("--no-cn", action="store_true", help="disable ControlNet Tile")
-    ap.add_argument("--cn-scale", type=float, default=0.6)
-    ap.add_argument("--device", default="mps")
-    ap.add_argument("--daemon", action="store_true", help="run as unix-socket daemon")
+    ap.add_argument("--guidance", type=float, default=5.5,
+                    help="guidance_scale, Ark only")
+    ap.add_argument("--daemon", action="store_true",
+                    help="run as unix-socket daemon")
     ap.add_argument("--socket", default="/tmp/fcemu_photo.sock")
     args = ap.parse_args()
 
-    device = args.device
-    dtype = torch.float16 if device != "cpu" else torch.float32
-    use_cn = not args.no_cn
-
     if args.daemon:
-        serve(args.socket, use_cn, device, dtype)
+        serve(args.socket, args.backend)
         return
 
     if not args.inp or not args.out:
         ap.error("--in and --out are required when not in --daemon mode")
 
-    t0 = time.time()
-    pipe = load_pipe(use_cn, dtype).to(device)
-    print(f"[photo] pipeline ready in {time.time()-t0:.1f}s", flush=True)
-    ms = render(pipe, use_cn, device,
-                inp=args.inp, out=args.out, prompt=args.prompt, neg=args.neg,
-                strength=args.strength, steps=args.steps, guidance=args.guidance,
-                seed=args.seed, side=args.side, cn_scale=args.cn_scale)
-    print(f"[photo] inference {ms:.2f}s  -> {args.out}", flush=True)
+    provider = make_provider(args.backend)
+    ms = provider.repaint(
+        args.inp, args.out,
+        prompt=args.prompt,
+        seed=args.seed,
+        size=args.size,
+        guidance_scale=args.guidance,
+    )
+    print(f"[photo] {args.backend} {ms}ms -> {args.out}", flush=True)
 
 
 if __name__ == "__main__":
