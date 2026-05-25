@@ -8,8 +8,36 @@
 
 | backend  | 模型 / 服务                         | 必需环境变量      | 备注 |
 |----------|--------------------------------------|-------------------|------|
-| `ark`    | 豆包 SeedEdit / Seedream（火山方舟） | `ARK_API_KEY`     | 默认 i2i（重绘）。模型 ID 可用 `ARK_IMAGE_MODEL` 覆盖。 |
+| `ark`    | 豆包 Seedream / SeedEdit（火山方舟） | `ARK_API_KEY`     | 默认 `doubao-seedream-4-0-250828`。模型 ID 用 `ARK_IMAGE_MODEL` 或 `--model` 覆盖。 |
 | `openai` | OpenAI Images Edit（gpt-image-1）    | `OPENAI_API_KEY`  | 多模态图像编辑，输入会被 letterbox 到正方形。 |
+
+### Ark 可用模型 ID（按需自取）
+
+火山方舟控制台**「在线推理 → 模型广场」**里 inference endpoint 名就是这里要填的 `model`。常见的几个：
+
+| 系列 | 推荐场景 | 示例 model ID（以官方控制台为准） |
+|---|---|---|
+| Seedream 4.x | 多模态 t2i + i2i，当前主推 | `doubao-seedream-4-0-250828`, `doubao-seedream-4-5-*` |
+| Seedream 5.x | 更高画质，需开通 | `doubao-seedream-5-*` |
+| SeedEdit 3.x | 老 i2i 模型，逐步下线 | `doubao-seededit-3-0-i2i-250628` |
+| Seedream 3.0 t2i | 纯文生图 | `doubao-seedream-3-0-t2i-250415` |
+
+切换方式（三档优先级，前者覆盖后者）：
+
+```bash
+# 1) 单请求级（C++ 端将来可以扩展协议，curl 也能这样测）
+echo '{"in":"frame.png","out":"out.png","prompt":"...","model":"doubao-seedream-4-5-xxxx"}' \
+  | nc -U /tmp/fcemu_photo.sock
+
+# 2) CLI 旗标（daemon 或单帧都行）
+./tools/photo/photo_repaint.py --daemon --backend=ark --model=doubao-seedream-4-5-xxxx
+
+# 3) 环境变量（最省事，启动前 export 一次）
+export ARK_IMAGE_MODEL=doubao-seedream-4-5-xxxx
+./tools/photo/photo_repaint.py --daemon --backend=ark
+```
+
+> 404 `InvalidEndpointOrModel.NotFound` = 你的账号没这个 endpoint 或拼错了。去控制台复制 endpoint 名再贴。
 
 加新 provider 是 `photo_repaint.py` 里增加一个 `Provider` 子类（实现 `repaint()`）并注册到 `PROVIDERS` 字典——通常 ~40 行。
 
@@ -77,9 +105,10 @@ C++ 端 (`launch_photo_repaint` in `src/main.cpp`) 通过 UNIX socket 发一行 
  "out": "~/Desktop/fcemu-photo/rom_xxx.png",
  "prompt": "...",
  "backend": "ark",          // 可选，覆盖 daemon 默认
+ "model": "doubao-seedream-4-0-250828",  // 可选，按请求换模型
  "seed": 42,                // 可选
- "size": "1024x1024",       // 可选
- "guidance_scale": 5.5}     // 可选（ark）
+ "size": "2K",              // 可选（"1024x1024" / "2K" / "adaptive"）
+ "guidance_scale": 5.5}     // 可选（SeedEdit 3.x only，新模型不要传）
 
 // reply
 {"ok": true, "out": "...", "ms": 12345, "backend": "ark"}
@@ -97,7 +126,7 @@ C++ 端只解析 `"ok": true`，回包多余字段被忽略——加新字段是
 | `FCEMU_PHOTO_PROMPT`     | provider 默认 | 全局 prompt 覆盖（C++ 端） |
 | `FCEMU_PHOTO_BACKEND`    | `ark`  | `--daemon` 不带 `--backend` 时的默认 |
 | `ARK_API_KEY`            | – | 豆包必填 |
-| `ARK_IMAGE_MODEL`        | `doubao-seededit-3-0-i2i-250628` | 覆盖 Ark 模型 ID |
+| `ARK_IMAGE_MODEL`        | `doubao-seedream-4-0-250828` | 覆盖 Ark 模型 ID（Seedream 4.5/5、SeedEdit 3 等都在这里换） |
 | `OPENAI_API_KEY`         | – | OpenAI 必填 |
 | `OPENAI_IMAGE_MODEL`     | `gpt-image-1` | 覆盖 OpenAI 模型 ID |
 

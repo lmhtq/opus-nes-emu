@@ -100,16 +100,27 @@ class Provider:
 # ---------------------------------------------------------------------------
 
 class ArkProvider(Provider):
-    """Volcano Ark image-to-image (SeedEdit) and text-to-image (Seedream).
+    """Volcano Ark image-to-image / text-to-image.
 
-    The same `images/generations` endpoint serves both; whether it behaves as
-    img2img depends on whether `image` is supplied and the chosen model. We
-    default to SeedEdit 3.0 i2i — pass --ark-model or ARK_IMAGE_MODEL to
-    switch (e.g. doubao-seedream-3-0-t2i-250415 for pure text2img).
+    The same `images/generations` endpoint serves multiple model families:
+      - Seedream 4.x  (multimodal t2i+i2i, recommended)   doubao-seedream-4-*
+      - SeedEdit 3.0  (i2i only, older)                   doubao-seededit-3-0-i2i-*
+      - Seedream 3.0  (pure t2i)                          doubao-seedream-3-0-t2i-*
+
+    Default is Seedream 4.0. Override via (in order of priority):
+      1) per-request JSON  {"model": "..."}
+      2) CLI flag          --model=<id>
+      3) env var           ARK_IMAGE_MODEL=<id>
+
+    Different model families accept slightly different params; we only send
+    fields that all current Ark image models tolerate, and forward
+    guidance_scale only when the caller explicitly asks for it.
     """
     name = "ark"
 
-    DEFAULT_MODEL = "doubao-seededit-3-0-i2i-250628"
+    # Seedream 4.0 is the current stable Ark image model that supports both
+    # t2i and i2i. Set ARK_IMAGE_MODEL to switch to 4.5 / 5 / SeedEdit / etc.
+    DEFAULT_MODEL = "doubao-seedream-4-0-250828"
     ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
 
     def __init__(self, model: Optional[str] = None):
@@ -126,22 +137,33 @@ class ArkProvider(Provider):
         upscaled = upscale_nearest(src, opts.get("target_long", 1024))
         b64 = base64.b64encode(encode_png_bytes(upscaled)).decode("ascii")
 
+        model = opts.get("model") or self.model
         body = {
-            "model": self.model,
+            "model": model,
             "prompt": prompt or DEFAULT_PROMPT,
             "image": f"data:image/png;base64,{b64}",
             "response_format": "url",
-            "size": opts.get("size", "adaptive"),
+            "size": opts.get("size") or "2K",
             "seed": int(opts.get("seed", 42)),
-            "guidance_scale": float(opts.get("guidance_scale", 5.5)),
             "watermark": bool(opts.get("watermark", False)),
         }
+        # guidance_scale: only SeedEdit 3.x accepts it; omit by default so
+        # newer Seedream models don't reject the request.
+        if opts.get("guidance_scale") is not None:
+            body["guidance_scale"] = float(opts["guidance_scale"])
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         r = self.session.post(self.ENDPOINT, headers=headers,
                               json=body, timeout=180)
+        if r.status_code == 404:
+            raise RuntimeError(
+                f"Ark HTTP 404 — model '{model}' not found or no access. "
+                f"Override with ARK_IMAGE_MODEL=<id>, --model=<id>, or per-"
+                f"request JSON {{\"model\":\"...\"}}. Response: {r.text[:200]}"
+            )
         if r.status_code >= 400:
             raise RuntimeError(f"Ark HTTP {r.status_code}: {r.text[:400]}")
         data = r.json()
@@ -225,22 +247,25 @@ PROVIDERS = {
 }
 
 
-def make_provider(name: str) -> Provider:
+def make_provider(name: str, *, model: Optional[str] = None) -> Provider:
     cls = PROVIDERS.get(name)
     if cls is None:
         raise RuntimeError(f"unknown backend: {name} "
                            f"(known: {', '.join(PROVIDERS)})")
-    return cls()
+    return cls(model=model)
 
 
 # ---------------------------------------------------------------------------
 # Daemon
 # ---------------------------------------------------------------------------
 
-def serve(socket_path: str, default_backend: str) -> None:
+def serve(socket_path: str, default_backend: str,
+          default_model: Optional[str] = None) -> None:
     # Eager-construct the default provider so missing API keys fail fast at
     # daemon startup (not on first P press).
-    providers: dict[str, Provider] = {default_backend: make_provider(default_backend)}
+    providers: dict[str, Provider] = {
+        default_backend: make_provider(default_backend, model=default_model)
+    }
     print(f"[photo-daemon] default backend={default_backend} "
           f"model={getattr(providers[default_backend], 'model', '?')}",
           flush=True)
@@ -280,10 +305,11 @@ def serve(socket_path: str, default_backend: str) -> None:
                     ms = provider.repaint(
                         inp, out,
                         prompt=prompt,
+                        model=req.get("model"),
                         seed=req.get("seed", 42),
                         size=req.get("size"),
                         side=req.get("side", 1024),
-                        guidance_scale=req.get("guidance_scale", 5.5),
+                        guidance_scale=req.get("guidance_scale"),
                         target_long=req.get("target_long", 1024),
                     )
                     rep = {"ok": True, "out": out, "ms": ms,
@@ -319,24 +345,29 @@ def main():
     ap.add_argument("--backend",
                     default=os.environ.get("FCEMU_PHOTO_BACKEND", "ark"),
                     choices=sorted(PROVIDERS.keys()))
+    ap.add_argument("--model", default=None,
+                    help="Override the provider's default model ID "
+                         "(e.g. doubao-seedream-4-5-xxxxxx). Falls back to "
+                         "ARK_IMAGE_MODEL / OPENAI_IMAGE_MODEL env, then to "
+                         "the provider's hardcoded default.")
     ap.add_argument("--size", default=None,
-                    help='Output size like "1024x1024". Provider-specific.')
+                    help='Output size like "1024x1024" or "2K". Provider-specific.')
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--guidance", type=float, default=5.5,
-                    help="guidance_scale, Ark only")
+    ap.add_argument("--guidance", type=float, default=None,
+                    help="guidance_scale (SeedEdit 3.x only; omit by default)")
     ap.add_argument("--daemon", action="store_true",
                     help="run as unix-socket daemon")
     ap.add_argument("--socket", default="/tmp/fcemu_photo.sock")
     args = ap.parse_args()
 
     if args.daemon:
-        serve(args.socket, args.backend)
+        serve(args.socket, args.backend, default_model=args.model)
         return
 
     if not args.inp or not args.out:
         ap.error("--in and --out are required when not in --daemon mode")
 
-    provider = make_provider(args.backend)
+    provider = make_provider(args.backend, model=args.model)
     ms = provider.repaint(
         args.inp, args.out,
         prompt=args.prompt,
